@@ -39,7 +39,6 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response, Depends
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from nexgame_scheduler import start_scheduler, shutdown_scheduler
-
 import config
 import auth
 import customers as cust
@@ -51,6 +50,9 @@ from db import database as db
 from gumroad_webhook import router as gumroad_router
 
 app = FastAPI(title="NexGame Lite", version="1.0")
+@app.on_event("startup")
+def _on_startup():
+    start_scheduler()
 db.init_db()
 cust.init_db()
 provider = get_provider()
