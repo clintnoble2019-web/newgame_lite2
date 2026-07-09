@@ -24,7 +24,7 @@ MSF_PASSWORD = ""
 MSF_SEASON = "2026-regular"
 
 # BallDontLie credentials (PRIMARY — GOAT tier, MLB + NBA, $79.98/mo locked)
-BDL_API_KEY = os.environ.get("BDL_API_KEY", "e3cb7497-d948-4149-ab2e-964d15e90ad3")
+BDL_API_KEY = os.environ.get("BDL_API_KEY", "")
 BDL_SEASON = 2026   # int, not string — BallDontLie uses bare year
 
 # ── Simulation (LOCKED decisions — FDD v1.1) ─────────────────────────
