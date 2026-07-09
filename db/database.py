@@ -31,11 +31,19 @@ database as db` so the package is presumably already set up).
 import sqlite3
 import os
 import json
+import sys
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "nexgame.db")
+# Single source of truth for the DB path lives in config.py (which reads
+# the DB_PATH env var, e.g. "/app/db/nexgame_lite.db" on Railway, inside
+# the mounted Volume). Import it here instead of computing a separate
+# path, so the scheduler and api/main.py always write to the same file.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import config
+
+DB_PATH = config.DB_PATH
 
 
 @contextmanager
