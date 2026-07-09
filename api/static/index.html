@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NexGame Lite</title>
+<style>
+  :root {
+    --bg: #0D0D0D; --panel: #161616; --card: #1E1E1E;
+    --accent: #00E5FF; --gold: #FFD700; --green: #00FF88;
+    --red: #FF5566; --text: #CCCCCC; --dim: #888888;
+    --border: #2A2A2A;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+  }
+  header {
+    background: var(--panel); border-bottom: 2px solid var(--accent);
+    padding: 16px 24px; display: flex; align-items: center; gap: 24px;
+    flex-wrap: wrap;
+  }
+  header h1 { color: var(--accent); font-size: 1.4rem; letter-spacing: 1px; }
+  header .sub { color: var(--dim); font-size: .8rem; }
+  nav { display: flex; gap: 8px; margin-left: auto; }
+  .tab-btn {
+    background: var(--card); color: var(--text); border: 1px solid var(--border);
+    padding: 8px 18px; border-radius: 6px; cursor: pointer; font-size: .9rem;
+  }
+  .tab-btn.active { border-color: var(--accent); color: var(--accent); }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+
+  .section-title {
+    color: var(--gold); font-size: 1.05rem; margin: 22px 0 10px;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  /* live ticker */
+  #ticker { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; }
+  .tick {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px; min-width: 150px; flex-shrink: 0;
+  }
+  .tick .m { color: var(--accent); font-size: .8rem; }
+  .tick .s { font-size: 1.15rem; font-weight: 600; color: #fff; }
+  .tick .p { color: var(--dim); font-size: .75rem; }
+
+  /* controls */
+  .controls { display: flex; gap: 12px; align-items: center; margin: 14px 0; }
+  select, input[type=date] {
+    background: var(--card); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px;
+  }
+
+  /* game cards */
+  .game {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 14px;
+  }
+  .game-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .matchup { font-size: 1.05rem; font-weight: 600; color: #fff; }
+  .meta { color: var(--dim); font-size: .8rem; }
+  .spacer { flex: 1; }
+  button.run {
+    background: linear-gradient(90deg, #003344, #005566);
+    color: var(--accent); border: 1px solid var(--accent);
+    padding: 8px 18px; border-radius: 6px; cursor: pointer; font-weight: 600;
+  }
+  button.run:hover { background: #005566; }
+  button.run.locked {
+    background: var(--panel); color: var(--dim); border-color: var(--border);
+    cursor: not-allowed;
+  }
+  button.settle {
+    background: transparent; color: var(--gold);
+    border: 1px solid var(--gold); padding: 8px 18px;
+    border-radius: 6px; cursor: pointer;
+  }
+  button:disabled { opacity: .45; cursor: wait; }
+  button.run.locked:disabled { cursor: not-allowed; }
+
+  /* prediction card */
+  .pred { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px; }
+  .winbar-wrap { margin: 10px 0; }
+  .winbar {
+    height: 22px; border-radius: 6px; overflow: hidden;
+    display: flex; border: 1px solid var(--border);
+  }
+  .winbar .home { background: var(--accent); }
+  .winbar .away { background: #333; }
+  .winlabels { display: flex; justify-content: space-between; font-size: .85rem;
+               margin-top: 4px; }
+  .badge {
+    display: inline-block; padding: 3px 12px; border-radius: 20px;
+    font-size: .75rem; font-weight: 700; margin-left: 8px;
+  }
+  .badge.high { background: #003a22; color: var(--green); }
+  .badge.medium { background: #3a3200; color: var(--gold); }
+  .badge.high_variance { background: #3a0016; color: var(--red); }
+  .badge.strong_lean { background: #003a22; color: var(--green); }
+  .badge.lean { background: #3a3200; color: var(--gold); }
+  .badge.toss_up { background: #1a1a3a; color: #8899ff; }
+
+  .ranges { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+  .range-box { background: var(--panel); border-radius: 8px; padding: 12px; }
+  .range-box .team { color: var(--accent); font-size: .85rem; }
+  .range-box .val { font-size: 1.3rem; font-weight: 700; color: #fff; }
+  .range-box .med { color: var(--dim); font-size: .78rem; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: .85rem; }
+  th { color: var(--accent); text-align: left; padding: 6px 10px;
+       border-bottom: 1px solid var(--border); text-transform: uppercase;
+       font-size: .72rem; letter-spacing: .5px; }
+  td { padding: 6px 10px; border-bottom: 1px solid #222; }
+  .simmeta { color: var(--dim); font-size: .75rem; margin-top: 10px; }
+
+  /* settled */
+  .settled { margin-top: 12px; background: var(--panel); border-radius: 8px;
+             padding: 12px 16px; }
+  .ok { color: var(--green); } .bad { color: var(--red); }
+
+  /* accuracy page */
+  .acc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .acc-card { background: var(--card); border: 1px solid var(--border);
+              border-radius: 10px; padding: 18px; text-align: center; }
+  .acc-card .big { font-size: 2rem; font-weight: 800; color: var(--accent); }
+  .acc-card .lbl { color: var(--dim); font-size: .8rem; text-transform: uppercase; }
+  .recent-item { padding: 10px 0; border-bottom: 1px solid #222; font-size: .9rem; }
+
+  .loading { color: var(--accent); font-size: .85rem; }
+  @media (max-width: 640px) { .acc-grid, .ranges { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🎯 NEXGAME LITE</h1>
+    <div class="sub" id="subtitle">10,000 simulations per game</div>
+  </div>
+  <nav>
+    <button class="tab-btn active" id="tab-games" onclick="showPage('games')">Games</button>
+    <button class="tab-btn" id="tab-accuracy" onclick="showPage('accuracy')">Accuracy</button>
+    <span id="account-info" style="color:var(--dim);font-size:.8rem;align-self:center;margin-left:8px;"></span>
+    <button class="tab-btn" onclick="logout()">Log Out</button>
+  </nav>
+</header>
+
+<main>
+  <!-- GAMES PAGE -->
+  <div id="page-games">
+    <div class="section-title">Live Scores</div>
+    <div id="ticker"><span class="loading">Loading live feed…</span></div>
+
+    <div class="controls">
+      <select id="sport" onchange="loadGames()">
+        <option value="MLB">⚾ MLB</option>
+        <option value="NBA">🏀 NBA</option>
+      </select>
+      <input type="date" id="date" onchange="loadGames()"
+             onclick="try{this.showPicker()}catch(e){}">
+      <button class="tab-btn" onclick="document.getElementById('date').showPicker()"
+              style="padding:8px 12px" title="Open calendar">📅</button>
+    </div>
+
+    <div class="section-title">Games</div>
+    <div id="games"><span class="loading">Loading games…</span></div>
+  </div>
+
+  <!-- ACCURACY PAGE -->
+  <div id="page-accuracy" style="display:none">
+    <div class="section-title">Accuracy Dashboard — Public Track Record</div>
+    <div class="acc-grid" id="acc-cards"></div>
+    <div class="section-title">Recent Settled Games</div>
+    <div id="acc-recent"></div>
+  </div>
+</main>
+
+<script>
+const LIVE_POLL_MS = 60000;
+let liveTimer = null;
+
+// game_id -> {home, away} names, populated by loadGames(), used to
+// label settled results with real team names as a fallback.
+const gameNames = {};
+
+function showPage(name) {
+  document.getElementById('page-games').style.display =
+      name === 'games' ? '' : 'none';
+  document.getElementById('page-accuracy').style.display =
+      name === 'accuracy' ? '' : 'none';
+  document.getElementById('tab-games').classList.toggle('active', name==='games');
+  document.getElementById('tab-accuracy').classList.toggle('active', name==='accuracy');
+  if (name === 'accuracy') loadAccuracy();
+}
+
+function sport() { return document.getElementById('sport').value; }
+function dateStr() { return document.getElementById('date').value; }
+
+// TIMEZONE FIX: never use toISOString() for "today" — it converts to
+// UTC, and any evening Pacific session rolls over to tomorrow's date.
+// (That's how a prediction got generated for a game already in the
+// 9th inning on 2026-07-08.) Build the date from LOCAL components.
+function localDateStr(d) {
+  d = d || new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Shared fetch wrapper: throws the server's `detail` message on any
+// non-2xx response so errors render as real messages instead of the
+// raw error JSON leaking into the UI (e.g. the 409 first-pitch guard).
+async function apiFetch(url, opts) {
+  const r = await fetch(url, opts);
+  let body = null;
+  try { body = await r.json(); } catch (e) { /* non-JSON */ }
+  if (r.status === 401) { window.location.href = '/login'; throw new Error('Session expired'); }
+  if (!r.ok) {
+    const msg = (body && (body.detail || body.message)) || `HTTP ${r.status}`;
+    throw new Error(msg);
+  }
+  return body;
+}
+
+// ── live ticker ──────────────────────────────────────────────
+async function loadTicker() {
+  try {
+    const data = await apiFetch(`/api/live/${sport()}`);
+    const el = document.getElementById('ticker');
+    if (!data.length) { el.innerHTML = '<span class="loading">No games on the board.</span>'; return; }
+    el.innerHTML = data.map(g => `
+      <div class="tick">
+        <div class="m">${g.away} @ ${g.home}</div>
+        <div class="s">${g.away} ${g.away_score} – ${g.home} ${g.home_score}</div>
+        <div class="p">${g.period}</div>
+      </div>`).join('');
+  } catch (e) {
+    document.getElementById('ticker').innerHTML =
+      '<span class="loading">Live feed unavailable.</span>';
+  }
+}
+
+// ── games list ───────────────────────────────────────────────
+async function loadGames() {
+  const el = document.getElementById('games');
+  el.innerHTML = '<span class="loading">Loading games…</span>';
+  try {
+    const games = await apiFetch(`/api/games/${sport()}?date=${dateStr()}`);
+    if (!games.length) { el.innerHTML = '<span class="loading">No games scheduled.</span>'; return; }
+    el.innerHTML = games.map(g => {
+      gameNames[g.game_id] = { home: g.home, away: g.away };
+      // Backend refuses predictions after first pitch (409). Mirror
+      // that rule in the UI: live/final/postponed games get a locked
+      // button instead of inviting an error. Dev override lives at
+      // /api/predict/{id}?force=true via curl — deliberately not in UI.
+      const locked = (g.status || '').toLowerCase() !== 'scheduled';
+      const btn = locked
+        ? `<button class="run locked" disabled
+             title="Predictions must be generated before first pitch">
+             Locked — ${(g.status || '').toUpperCase()}</button>`
+        : `<button class="run" onclick="predict('${g.game_id}')"
+             id="btn-${cssId(g.game_id)}">Run Prediction</button>`;
+      return `
+      <div class="game" id="game-${cssId(g.game_id)}">
+        <div class="game-head">
+          <div>
+            <div class="matchup">${g.away} @ ${g.home}</div>
+            <div class="meta">${g.time} · ${g.venue} ·
+              ${g.starter_confirmed ? 'SP confirmed' : 'SP not confirmed → rotation avg'}</div>
+          </div>
+          <div class="spacer"></div>
+          ${btn}
+        </div>
+        <div class="pred" id="pred-${cssId(g.game_id)}" style="display:none"></div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = `<span class="loading">Could not load games: ${e.message}</span>`;
+  }
+}
+
+function cssId(s) { return s.replace(/[^a-zA-Z0-9]/g, '_'); }
+
+// ── prediction ───────────────────────────────────────────────
+async function predict(gameId) {
+  const btn = document.getElementById('btn-' + cssId(gameId));
+  btn.disabled = true; btn.textContent = 'Simulating 10,000 games…';
+  try {
+    const p = await apiFetch(`/api/predict/${gameId}?sport=${sport()}`,
+                             { method: 'POST' });
+    renderPrediction(gameId, p);
+    btn.textContent = 'Re-run Prediction';
+  } catch (e) {
+    alert('Prediction failed: ' + e.message);
+    btn.textContent = 'Run Prediction';
+  }
+  btn.disabled = false;
+}
+
+function renderPrediction(gameId, p, settled) {
+  const el = document.getElementById('pred-' + cssId(gameId));
+  el.style.display = '';
+  const winLabel = { strong_lean: 'STRONG FAVORITE', lean: 'MODERATE LEAN',
+                     toss_up: 'TOSS-UP' }[p.win_confidence] || 'TOSS-UP';
+  const marginLabel = { high: 'TIGHT MARGIN', medium: 'MODERATE MARGIN',
+                        high_variance: 'WIDE MARGIN RANGE' }[p.confidence];
+
+  // player projection table (top rows by first metric)
+  const projs = Object.entries(p.player_projections || {});
+  let metricCols = [];
+  if (projs.length) {
+    metricCols = Object.keys(projs[0][1]).filter(k => k !== 'name');
+    projs.sort((a, b) => (b[1][metricCols[0]]||0) - (a[1][metricCols[0]]||0));
+  }
+  const tableRows = projs.slice(0, 10).map(([pid, pr]) => `
+      <tr><td>${pr.name}</td>${metricCols.map(m =>
+        `<td>${pr[m] ?? ''}</td>`).join('')}</tr>`).join('');
+
+  el.innerHTML = `
+    <div class="winbar-wrap">
+      <div class="winbar">
+        <div class="home" style="width:${p.home_win_pct}%"></div>
+        <div class="away" style="width:${p.away_win_pct}%"></div>
+      </div>
+      <div class="winlabels">
+        <span>${p.home_team} ${p.home_win_pct}%</span>
+        <span class="badge ${p.win_confidence || 'toss_up'}" title="How lopsided the win probability is">${winLabel}</span>
+        <span>${p.away_team} ${p.away_win_pct}%</span>
+      </div>
+    </div>
+    <div class="section-title" style="margin-top:14px">Predicted Score (Median)
+      <span class="badge ${p.confidence}" style="margin-left:8px" title="How wide the projected final score range is">${marginLabel}</span>
+    </div>
+    <div class="ranges">
+      <div class="range-box">
+        <div class="team">${p.home_team}</div>
+        <div class="val">${p.score_med_home}</div>
+        <div class="med">range ${p.score_low_home} – ${p.score_high_home}</div>
+      </div>
+      <div class="range-box">
+        <div class="team">${p.away_team}</div>
+        <div class="val">${p.score_med_away}</div>
+        <div class="med">range ${p.score_low_away} – ${p.score_high_away}</div>
+      </div>
+    </div>
+    <table>
+      <tr><th>Player</th>${metricCols.map(m => `<th>${m}</th>`).join('')}</tr>
+      ${tableRows}
+    </table>
+    <div class="simmeta">Simulations: ${p.simulations_run.toLocaleString()}
+      · Generated: ${p.generated_at}</div>
+    <div style="margin-top:12px">
+      <button class="settle" onclick="settleGame('${gameId}')">Settle (fetch final)</button>
+    </div>
+    <div id="settled-${cssId(gameId)}"></div>`;
+
+  if (settled) renderSettled(gameId, settled);
+}
+
+// ── settling ─────────────────────────────────────────────────
+async function settleGame(gameId) {
+  try {
+    const s = await apiFetch(`/api/settle/${gameId}?sport=${sport()}`,
+                             { method: 'POST' });
+    renderSettled(gameId, s);
+    loadAccuracy();
+  } catch (e) { alert('Settle failed: ' + e.message); }
+}
+
+// Map a "home"/"away" side marker to the real team name. Falls back
+// through the settle payload's own team fields, then the games-list
+// cache, then the raw side string so nothing ever renders blank.
+function sideName(side, s, gameId) {
+  const key = String(side || '').toLowerCase();
+  const names = gameNames[gameId] || {};
+  if (key === 'home') return s.home_team || names.home || 'home';
+  if (key === 'away') return s.away_team || names.away || 'away';
+  return side;   // already a team name, or something unexpected — show as-is
+}
+
+function renderSettled(gameId, s) {
+  const el = document.getElementById('settled-' + cssId(gameId));
+  const names = gameNames[gameId] || {};
+  const awayName = s.away_team || names.away || 'Away';
+  const homeName = s.home_team || names.home || 'Home';
+  // LABELED final score — the old unlabeled "13 – 1" was away–home
+  // order, which reads as home–away at a glance and caused a false
+  // bug report on 2026-07-08. Team names on the numbers, always.
+  el.innerHTML = `
+    <div class="settled">
+      <strong>SETTLED</strong> — Final: ${awayName} ${s.actual_away} –
+        ${homeName} ${s.actual_home}<br>
+      <span class="${s.win_loss_correct ? 'ok' : 'bad'}">
+        ${s.win_loss_correct ? '✅' : '❌'} Win/Loss
+        (predicted ${sideName(s.predicted_winner, s, gameId)},
+         actual ${sideName(s.actual_winner, s, gameId)})</span><br>
+      <span class="${s.score_range_correct ? 'ok' : 'bad'}">
+        ${s.score_range_correct ? '✅' : '❌'} Score Range</span><br>
+      Player totals within ±20% band: <strong>${s.player_accuracy_pct}%</strong>
+    </div>`;
+}
+
+// ── accuracy page ────────────────────────────────────────────
+async function loadAccuracy() {
+  try {
+    const a = await apiFetch(`/api/accuracy?sport=${sport()}`);
+    const o = a.overall;
+    document.getElementById('acc-cards').innerHTML = `
+      <div class="acc-card"><div class="big">${o.win_loss_pct}%</div>
+        <div class="lbl">Win / Loss</div></div>
+      <div class="acc-card"><div class="big">${o.score_range_pct}%</div>
+        <div class="lbl">Score Range</div></div>
+      <div class="acc-card"><div class="big">${o.player_total_pct}%</div>
+        <div class="lbl">Player Totals (±20%)</div></div>`;
+    document.getElementById('acc-recent').innerHTML =
+      (a.recent || []).map(s => `
+        <div class="recent-item">
+          ${s.win_loss_correct ? '✅' : '❌'}
+          <strong>${s.away_team} @ ${s.home_team}</strong> (${s.sport})
+          — Final ${s.away_team} ${s.actual_away} – ${s.home_team} ${s.actual_home}
+          · Player acc ${s.player_accuracy_pct}%
+        </div>`).join('') ||
+      '<span class="loading">No settled games yet.</span>';
+  } catch (e) {
+    document.getElementById('acc-cards').innerHTML =
+      `<span class="loading">Accuracy unavailable: ${e.message}</span>`;
+  }
+}
+
+// ── auth ─────────────────────────────────────────────────────
+async function logout() {
+  await fetch('/api/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+async function loadAccountInfo() {
+  try {
+    const r = await fetch('/api/me');
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    const me = await r.json();
+    document.getElementById('account-info').textContent =
+      `${me.name} · ${me.tier}`;
+  } catch (e) { /* non-fatal */ }
+}
+
+// ── init ─────────────────────────────────────────────────────
+document.getElementById('date').value = localDateStr();
+loadAccountInfo();
+loadTicker(); loadGames();
+liveTimer = setInterval(loadTicker, LIVE_POLL_MS);
+</script>
+</body>
+</html>

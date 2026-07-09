@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NexGame Lite — Login</title>
+<style>
+  :root {
+    --bg: #0D0D0D; --panel: #161616; --card: #1E1E1E;
+    --accent: #00E5FF; --gold: #FFD700; --red: #FF5566;
+    --text: #CCCCCC; --dim: #888888; --border: #2A2A2A;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh; display: flex; align-items: center;
+    justify-content: center;
+  }
+  .box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 40px; width: 100%; max-width: 380px;
+  }
+  h1 { color: var(--accent); font-size: 1.4rem; text-align: center;
+       margin-bottom: 4px; letter-spacing: 1px; }
+  .sub { color: var(--dim); font-size: .8rem; text-align: center;
+         margin-bottom: 28px; }
+  label { display: block; font-size: .8rem; color: var(--accent);
+          margin-bottom: 6px; text-transform: uppercase;
+          letter-spacing: .5px; }
+  input {
+    width: 100%; background: var(--panel); border: 1px solid var(--border);
+    color: #fff; padding: 11px 12px; border-radius: 6px; font-size: .95rem;
+    margin-bottom: 18px;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  button {
+    width: 100%; background: linear-gradient(90deg, #003344, #005566);
+    color: var(--accent); border: 1px solid var(--accent);
+    padding: 12px; border-radius: 6px; cursor: pointer;
+    font-weight: 600; font-size: .95rem;
+  }
+  button:hover { background: #005566; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .error {
+    background: #2a0010; color: var(--red); border: 1px solid #5a0020;
+    padding: 10px 12px; border-radius: 6px; font-size: .85rem;
+    margin-bottom: 16px; display: none;
+  }
+  .footer { text-align: center; color: var(--dim); font-size: .78rem;
+            margin-top: 22px; line-height: 1.5; }
+  .footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<div class="box">
+  <h1>🎯 NEXGAME LITE</h1>
+  <div class="sub">Sign in with your email and license key</div>
+
+  <div class="error" id="error"></div>
+
+  <form id="loginForm">
+    <label for="email">Email</label>
+    <input type="email" id="email" required autocomplete="email">
+
+    <label for="key">License Key</label>
+    <input type="text" id="key" required autocomplete="off"
+           placeholder="XXXX-XXXX-XXXX-XXXX">
+
+    <button type="submit" id="submitBtn">Sign In</button>
+  </form>
+
+  <div class="footer">
+    Purchased through Gumroad? Your license key was emailed at checkout.<br>
+    Contra client? Your key was sent directly — check your email or DM.
+  </div>
+</div>
+
+<script>
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  const errEl = document.getElementById('error');
+  errEl.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Signing in...';
+
+  const email = document.getElementById('email').value;
+  const key = document.getElementById('key').value;
+
+  try {
+    const r = await fetch(`/api/login?email=${encodeURIComponent(email)}` +
+                          `&license_key=${encodeURIComponent(key)}`,
+                          { method: 'POST', credentials: 'include' });
+    if (r.ok) {
+      window.location.href = '/';
+    } else {
+      const err = await r.json();
+      errEl.textContent = err.detail || 'Login failed. Check your email and license key.';
+      errEl.style.display = 'block';
+      btn.disabled = false; btn.textContent = 'Sign In';
+    }
+  } catch (err) {
+    errEl.textContent = 'Connection error. Try again.';
+    errEl.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+});
+</script>
+</body>
+</html>
