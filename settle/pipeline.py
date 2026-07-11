@@ -51,13 +51,13 @@ def settle_game(prediction: SimulationOutput,
     actual_winner = "home" if actual_home > actual_away else "away"
     win_loss_correct = predicted_winner == actual_winner
 
-    # ── Score range (both teams must land in band) ──────────────────
+  # ── Score range (both teams must land in band) ──────────────────
     home_in = (prediction.score_low_home <= actual_home
                <= prediction.score_high_home)
     away_in = (prediction.score_low_away <= actual_away
                <= prediction.score_high_away)
     score_range_correct = home_in and away_in
-
+    
     # ── Player totals (±20% each) ────────────────────────────────────
     # Direct player_id match first. Fallback to name match (case-
     # insensitive) for the same real person if IDs don't line up —

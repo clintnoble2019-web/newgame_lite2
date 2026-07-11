@@ -29,8 +29,16 @@ BDL_SEASON = 2026   # int, not string — BallDontLie uses bare year
 
 # ── Simulation (LOCKED decisions — FDD v1.1) ─────────────────────────
 SIMULATION_RUNS = 10_000        # locked: 10k, not 1k
-TRIM_PCT = 0.025                # trim 2.5% each tail → 9,500 window
+
+TRIM_PCT = 0.30                 # narrowed 2026-07-10: 2.5% (95% CI) read
+                                 # as a near-unfailable, unusably wide
+                                 # range for customers. 30% trim keeps
+                                 # a 40%-window band (30th-70th pctile),
+                                 # tight and genuinely predictive.
 TRIM_COUNT = int(SIMULATION_RUNS * TRIM_PCT)
+
+CONFIDENCE_BANDS_MLB = {"high": 2, "medium": 4}    # retuned to match
+CONFIDENCE_BANDS_NBA = {"high": 6, "medium": 10}   # narrower window
 
 # ── Player data sufficiency (LOCKED) ─────────────────────────────────
 MLB_PITCHER_MIN_GAMES = 5       # pitchers need 5 starts before rolling avg
