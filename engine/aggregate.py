@@ -147,7 +147,15 @@ def run_simulation(context: GameContext,
             "away": _pitcher_block(context.away_team),
         }
 
-    width = max(hi_h - lo_h, hi_a - lo_a)
+ # Margin confidence measures the MARGIN, not each team's individual
+    # score spread. Redefined 2026-07-11: previously max(team range
+    # widths), which called overlapping ranges (e.g. 3-6 vs 1-3, where
+    # anything from a tie to a 5-run blowout is in play) a "tight
+    # margin". Now: trimmed width of (home - away) across all
+    # iterations — the actual spread of possible victory margins.
+    lo_m, med_m, hi_m = _trimmed([r.home_score - r.away_score
+                                  for r in results])
+    width = hi_m - lo_m
 
     return SimulationOutput(
         game_id=context.game_id,

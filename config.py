@@ -37,8 +37,11 @@ TRIM_PCT = 0.30                 # narrowed 2026-07-10: 2.5% (95% CI) read
                                  # tight and genuinely predictive.
 TRIM_COUNT = int(SIMULATION_RUNS * TRIM_PCT)
 
-CONFIDENCE_BANDS_MLB = {"high": 2, "medium": 4}    # retuned to match
-CONFIDENCE_BANDS_NBA = {"high": 6, "medium": 10}   # narrower window
+# ── Confidence signal thresholds (MARGIN width, redefined 2026-07-11) ─
+# Now measured against the trimmed width of (home - away) across all
+# iterations, not each team's individual score spread.
+CONFIDENCE_BANDS_MLB = {"high": 3, "medium": 5}
+CONFIDENCE_BANDS_NBA = {"high": 8, "medium": 14}
 
 # ── Player data sufficiency (LOCKED) ─────────────────────────────────
 MLB_PITCHER_MIN_GAMES = 5       # pitchers need 5 starts before rolling avg
