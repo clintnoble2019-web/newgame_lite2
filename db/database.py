@@ -118,6 +118,17 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_settles_sport ON settles(sport);")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_settles_settled_at ON settles(settled_at);")
 
+        # Migration: pitching_matchup added 2026-07-11. CREATE TABLE IF
+        # NOT EXISTS won't touch an existing table, so add the column
+        # defensively for DBs created before this change. New DBs get it
+        # via the ALTER too (kept out of the CREATE above so both paths
+        # go through the same statement — one source of truth).
+        try:
+            conn.execute("ALTER TABLE predictions ADD COLUMN "
+                         "pitching_matchup TEXT NOT NULL DEFAULT '{}'")
+        except sqlite3.OperationalError:
+            pass   # column already exists
+
 
 def _sport_value(sport) -> str:
     """Handles both the Sport enum and a plain string ('MLB'/'NBA')."""
@@ -145,8 +156,8 @@ def save_prediction(pred) -> None:
                 score_low_home, score_med_home, score_high_home,
                 score_low_away, score_med_away, score_high_away,
                 player_projections, confidence, win_confidence,
-                simulations_run, generated_at, stored_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                simulations_run, generated_at, stored_at, pitching_matchup
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id) DO UPDATE SET
                 home_win_pct = excluded.home_win_pct,
                 away_win_pct = excluded.away_win_pct,
@@ -161,7 +172,8 @@ def save_prediction(pred) -> None:
                 win_confidence = excluded.win_confidence,
                 simulations_run = excluded.simulations_run,
                 generated_at = excluded.generated_at,
-                stored_at = excluded.stored_at
+                stored_at = excluded.stored_at,
+                pitching_matchup = excluded.pitching_matchup
             """,
             (
                 pred.game_id, _sport_value(pred.sport), pred.home_team, pred.away_team,
@@ -171,6 +183,7 @@ def save_prediction(pred) -> None:
                 json.dumps(pred.player_projections), pred.confidence, pred.win_confidence,
                 pred.simulations_run, pred.generated_at,
                 datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                json.dumps(getattr(pred, "pitching_matchup", {}) or {}),
             ),
         )
 
@@ -190,6 +203,7 @@ def get_prediction(game_id: str) -> dict | None:
         return None
     d = dict(row)
     d["player_projections"] = json.loads(d["player_projections"])
+    d["pitching_matchup"] = json.loads(d.get("pitching_matchup") or "{}")
     return d
 
 
@@ -216,6 +230,7 @@ def get_unsettled_predictions(sport: str = None) -> list[dict]:
     for r in rows:
         d = dict(r)
         d["player_projections"] = json.loads(d["player_projections"])
+        d["pitching_matchup"] = json.loads(d.get("pitching_matchup") or "{}")
         out.append(d)
     return out
 
@@ -274,6 +289,13 @@ def get_accuracy_summary(sport: str = None) -> dict:
     Matches main.py:
         db.get_accuracy_summary()                -> overall
         db.get_accuracy_summary(sport='MLB')      -> by_sport
+
+    Key names below (win_loss_pct / score_range_pct / player_total_pct) are
+    the frontend contract — api/static/index.html reads these exact keys
+    off the /api/accuracy response, as 0-100 percentages already rounded.
+    (Previously this returned win_loss_accuracy/score_range_accuracy/
+    avg_player_accuracy_pct as 0-1 fractions under different names, which
+    the frontend didn't recognize -> rendered as "undefined%".)
     """
     query = "SELECT win_loss_correct, score_range_correct, player_accuracy_pct FROM settles"
     params = []
@@ -289,9 +311,9 @@ def get_accuracy_summary(sport: str = None) -> dict:
         return {
             "sport": sport or "ALL",
             "total_settled": 0,
-            "win_loss_accuracy": None,
-            "score_range_accuracy": None,
-            "avg_player_accuracy_pct": None,
+            "win_loss_pct": 0.0,
+            "score_range_pct": 0.0,
+            "player_total_pct": 0.0,
         }
 
     win_loss_hits = sum(r["win_loss_correct"] for r in rows)
@@ -301,17 +323,29 @@ def get_accuracy_summary(sport: str = None) -> dict:
     return {
         "sport": sport or "ALL",
         "total_settled": total,
-        "win_loss_accuracy": round(win_loss_hits / total, 4),
-        "score_range_accuracy": round(score_range_hits / total, 4),
-        "avg_player_accuracy_pct": round(avg_player_acc, 1),
+        "win_loss_pct": round(win_loss_hits / total * 100, 1),
+        "score_range_pct": round(score_range_hits / total * 100, 1),
+        "player_total_pct": round(avg_player_acc, 1),
     }
 
 
 def get_recent_settles(limit: int = 10) -> list[dict]:
-    """Matches main.py: db.get_recent_settles(limit=10)."""
+    """Matches main.py: db.get_recent_settles(limit=10).
+
+    JOINs predictions for home_team/away_team — the settles table only
+    stores actual_home/actual_away scores, not team names, so without
+    the join the frontend's `${s.home_team} @ ${s.away_team}` read
+    undefined off every row ("undefined @ undefined" on the Accuracy tab).
+    """
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM settles ORDER BY settled_at DESC LIMIT ?", (limit,)
+            """
+            SELECT s.*, p.home_team AS home_team, p.away_team AS away_team
+            FROM settles s
+            JOIN predictions p ON p.game_id = s.game_id
+            ORDER BY s.settled_at DESC LIMIT ?
+            """,
+            (limit,),
         ).fetchall()
 
     out = []
@@ -321,4 +355,48 @@ def get_recent_settles(limit: int = 10) -> list[dict]:
         d["win_loss_correct"] = bool(d["win_loss_correct"])
         d["score_range_correct"] = bool(d["score_range_correct"])
         out.append(d)
+    return out
+
+
+def get_predictions_for_games(game_ids: list[str]) -> dict:
+    """Bulk-fetch stored predictions for a list of game_ids, keyed by
+    game_id. Powers the Games tab showing a prediction that was run
+    earlier — even in a previous server process, since the old
+    in-memory-only _predictions cache in main.py didn't survive a
+    restart/redeploy."""
+    if not game_ids:
+        return {}
+    placeholders = ",".join("?" for _ in game_ids)
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM predictions WHERE game_id IN ({placeholders})",
+            game_ids,
+        ).fetchall()
+    out = {}
+    for r in rows:
+        d = dict(r)
+        d["player_projections"] = json.loads(d["player_projections"])
+        d["pitching_matchup"] = json.loads(d.get("pitching_matchup") or "{}")
+        out[d["game_id"]] = d
+    return out
+
+
+def get_settles_for_games(game_ids: list[str]) -> dict:
+    """Bulk-fetch settle results for a list of game_ids, keyed by
+    game_id. Powers the per-game grade shown on the Games tab."""
+    if not game_ids:
+        return {}
+    placeholders = ",".join("?" for _ in game_ids)
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM settles WHERE game_id IN ({placeholders})",
+            game_ids,
+        ).fetchall()
+    out = {}
+    for r in rows:
+        d = dict(r)
+        d["player_results"] = json.loads(d["player_results"])
+        d["win_loss_correct"] = bool(d["win_loss_correct"])
+        d["score_range_correct"] = bool(d["score_range_correct"])
+        out[d["game_id"]] = d
     return out

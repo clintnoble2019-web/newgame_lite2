@@ -164,6 +164,18 @@ class MySportsFeedsProvider(DataProvider):
         data = self._get(sport, f"games/{game_id}/boxscore.json")
         return self._parse_boxscore(data, sport)
 
+    def get_boxscore(self, game_id: str, sport: Sport) -> dict:
+        """boxscore.json updates during LIVE games too, so this call
+        works pre-final. No verified per-period breakdown field on this
+        endpoint — line_score comes back empty rather than guessing at
+        a field name that might silently return wrong data."""
+        data = self._get(sport, f"games/{game_id}/boxscore.json")
+        box = self._parse_boxscore(data, sport)
+        box["line_score"] = []
+        sched = data.get("game", {}).get("schedule", {})
+        box["period"] = sched.get("playedStatus")
+        return box
+
     # ── parsers ──────────────────────────────────────────────────────
     def _parse_game_shell(self, game_json: dict, sport: Sport) -> GameContext:
         """Schedule + score only — no roster detail yet (that's Phase 2
@@ -364,6 +376,8 @@ class MySportsFeedsProvider(DataProvider):
                 pid = str(player.get("id", ""))
                 if not pid:
                     continue
+                name = (f"{player.get('firstName','')} "
+                       f"{player.get('lastName','')}").strip() or pid
                 stats = entry.get("playerStats", entry.get("stats", {}))
                 out = {}
                 if sport == Sport.MLB:
@@ -383,6 +397,7 @@ class MySportsFeedsProvider(DataProvider):
                     out["rebounds"] = _i(offense.get("reb")
                                          or offense.get("rebTotal"))
                 if out:
+                    out["_name"] = name
                     player_stats[pid] = out
 
         return {"home_score": home_score, "away_score": away_score,

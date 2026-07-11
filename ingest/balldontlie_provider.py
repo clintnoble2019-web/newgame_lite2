@@ -327,6 +327,50 @@ class BallDontLieProvider(DataProvider):
         stats = self._get(sport, "stats", params={"game_ids[]": game_id})
         return self._parse_boxscore(game, stats.get("data", []), sport)
 
+    def get_boxscore(self, game_id: str, sport: Sport) -> dict:
+        """CONFIRMED against BallDontLie's published MLB OpenAPI spec
+        (openapi/mlb.yml) on 2026-07-11: the game object itself carries
+        home_team_data.inning_scores / away_team_data.inning_scores
+        (array of per-inning runs) — no separate call needed. NBA
+        carries the same idea as flat home_q1..q4/visitor_q1..q4 fields
+        (there is no away_q* — BallDontLie uses 'visitor' for NBA
+        scoring fields specifically, same legacy naming as visitor_team
+        elsewhere in this file).
+
+        Also works for LIVE games, not just FINAL — the stats endpoint
+        returns whatever's accrued so far."""
+        game = self._get(sport, f"games/{game_id}").get("data", {})
+        stats = self._get(sport, "stats", params={"game_ids[]": game_id})
+        box = self._parse_boxscore(game, stats.get("data", []), sport)
+
+        line_score = []
+        if sport == Sport.MLB:
+            home_innings = (game.get("home_team_data") or {}).get("inning_scores") or []
+            away_innings = (game.get("away_team_data") or {}).get("inning_scores") or []
+            for i in range(max(len(home_innings), len(away_innings))):
+                line_score.append({
+                    "label": str(i + 1),
+                    "home": home_innings[i] if i < len(home_innings) else 0,
+                    "away": away_innings[i] if i < len(away_innings) else 0,
+                })
+        else:
+            for i in range(1, 5):
+                h, a = game.get(f"home_q{i}"), game.get(f"visitor_q{i}")
+                if h is None and a is None:
+                    continue
+                line_score.append({"label": f"Q{i}", "home": h or 0, "away": a or 0})
+            for i in range(1, 4):
+                h, a = game.get(f"home_ot{i}"), game.get(f"visitor_ot{i}")
+                if h is None and a is None:
+                    continue
+                line_score.append({"label": f"OT{i}", "home": h or 0, "away": a or 0})
+
+        box["line_score"] = line_score
+        inning_num = game.get("period")
+        box["period"] = (f"Inning {inning_num}" if sport == Sport.MLB and inning_num
+                         else (game.get("status_detail") or game.get("status")))
+        return box
+
     # ── parsers ──────────────────────────────────────────────────────
     def _parse_game_shell(self, g: dict, sport: Sport) -> GameContext:
         home_j = g.get("home_team", {})
@@ -573,11 +617,20 @@ class BallDontLieProvider(DataProvider):
                    f"{player.get('last_name','')}").strip()
             out = {}
             if sport == Sport.MLB:
-                if "batting_h" in row or "batting_rbi" in row:
-                    out["hits"] = _i(row.get("batting_h"))
-                    out["rbis"] = _i(row.get("batting_rbi"))
-                if "pitching_k" in row:
-                    out["strikeouts"] = _i(row.get("pitching_k"))
+                # CONFIRMED against BallDontLie's published MLB OpenAPI
+                # spec (openapi/mlb.yml) on 2026-07-11: stats rows are
+                # flat, not nested under 'batting'/'pitching' — every
+                # row carries both sets of fields, null where they
+                # don't apply. The old field names here (batting_h,
+                # batting_rbi, pitching_k) don't exist in the real
+                # response at all, so this was silently matching zero
+                # players on every settle for this provider — a much
+                # bigger bug than the modal that surfaced it.
+                if row.get("hits") is not None:
+                    out["hits"] = _i(row.get("hits"))
+                    out["rbis"] = _i(row.get("rbi"))
+                if row.get("ip") is not None:
+                    out["strikeouts"] = _i(row.get("p_k"))
             else:
                 out["points"] = _i(row.get("pts"))
                 out["assists"] = _i(row.get("ast"))

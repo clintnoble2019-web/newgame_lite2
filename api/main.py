@@ -131,15 +131,37 @@ def games_for_date(sport_name: str, date: str = Query(...),
         games = provider.get_games_for_date(sport, date)
     except Exception as e:
         raise HTTPException(502, f"Provider error: {e}")
-    return [{
-        "game_id": g.game_id,
-        "home": g.home_team.name, "home_abbrev": g.home_team.abbrev,
-        "away": g.away_team.name, "away_abbrev": g.away_team.abbrev,
-        "time": g.game_time, "venue": g.venue,
-        "status": g.status.value,
-        "starter_confirmed": g.home_team.confirmed_starter is not None,
-        "predicted": g.game_id in _predictions,
-    } for g in games]
+
+    game_ids = [g.game_id for g in games]
+    # Pull from the DB, not just the in-memory _predictions cache, so a
+    # prediction/grade made earlier (or in a prior server process —
+    # e.g. after a Railway redeploy) still shows up here. This is what
+    # lets the Games tab display "what we called it" + "how it graded"
+    # for games that already started/finished, not just ones you're
+    # about to run a fresh prediction for.
+    preds_by_game = db.get_predictions_for_games(game_ids)
+    settles_by_game = db.get_settles_for_games(game_ids)
+
+    out = []
+    for g in games:
+        pred = preds_by_game.get(g.game_id)
+        settle = settles_by_game.get(g.game_id)
+        pred_payload = None
+        if pred:
+            pred_payload = {k: v for k, v in pred.items()
+                            if k not in ("id", "stored_at")}
+        out.append({
+            "game_id": g.game_id,
+            "home": g.home_team.name, "home_abbrev": g.home_team.abbrev,
+            "away": g.away_team.name, "away_abbrev": g.away_team.abbrev,
+            "time": g.game_time, "venue": g.venue,
+            "status": g.status.value,
+            "starter_confirmed": g.home_team.confirmed_starter is not None,
+            "predicted": pred is not None,
+            "prediction": pred_payload,
+            "settle": settle,
+        })
+    return out
 
 
 # ── Live ticker ───────────────────────────────────────────────────────
@@ -151,6 +173,17 @@ def live_scores(sport_name: str,
         return provider.get_live_scores(sport)
     except Exception as e:
         raise HTTPException(502, f"Live feed error: {e}")
+
+
+# ── Box score (click-through modal on the Games tab) ───────────────────
+@app.get("/api/boxscore/{game_id}")
+def boxscore(game_id: str, sport: str = Query(...),
+            customer: cust.Customer = Depends(require_customer)):
+    sp = _sport(sport)
+    try:
+        return provider.get_boxscore(game_id, sp)
+    except Exception as e:
+        raise HTTPException(502, f"Boxscore error: {e}")
 
 
 # ── Prediction (the product) ─────────────────────────────────────────

@@ -41,6 +41,19 @@ class DataProvider(ABC):
                   'player_stats': {player_id: {metric: value}}}"""
         ...
 
+    @abstractmethod
+    def get_boxscore(self, game_id: str, sport: Sport) -> dict:
+        """Box score for the click-through modal on the Games tab.
+        Works for LIVE or FINAL games (returns whatever the source has
+        so far for a live game — partial stats are expected and fine).
+        Returns: {'home_score': int, 'away_score': int,
+                  'player_stats': {player_id: {metric: value, '_name': str}},
+                  'line_score': [{'label': str, 'home': int, 'away': int}, ...]}
+        line_score is per-inning (MLB) / per-quarter (NBA) scoring, oldest
+        first. Not every provider/tier can supply this — return [] rather
+        than guessing, and the modal just won't show the innings grid."""
+        ...
+
 
 def get_provider():
     """Factory — reads config.DATA_PROVIDER and returns the right provider.

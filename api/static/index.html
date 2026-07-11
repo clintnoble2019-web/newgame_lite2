@@ -108,6 +108,17 @@
   .range-box .val { font-size: 1.3rem; font-weight: 700; color: #fff; }
   .range-box .med { color: var(--dim); font-size: .78rem; }
 
+  /* pitching matchup */
+  .matchup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+  .pitcher-box { background: var(--panel); border-radius: 8px; padding: 12px; }
+  .pitcher-box .team { color: var(--accent); font-size: .8rem; }
+  .pitcher-box .pname { font-size: 1.05rem; font-weight: 700; color: #fff; margin: 2px 0; }
+  .pitcher-box .pstats { color: var(--dim); font-size: .8rem; }
+  .pitcher-box .tag { display: inline-block; padding: 1px 8px; border-radius: 10px;
+                     font-size: .68rem; font-weight: 700; margin-left: 6px; }
+  .pitcher-box .tag.confirmed { background: #003a22; color: var(--green); }
+  .pitcher-box .tag.rotation { background: #3a3200; color: var(--gold); }
+
   table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: .85rem; }
   th { color: var(--accent); text-align: left; padding: 6px 10px;
        border-bottom: 1px solid var(--border); text-transform: uppercase;
@@ -129,7 +140,49 @@
   .recent-item { padding: 10px 0; border-bottom: 1px solid #222; font-size: .9rem; }
 
   .loading { color: var(--accent); font-size: .85rem; }
-  @media (max-width: 640px) { .acc-grid, .ranges { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) { .acc-grid, .ranges, .matchup-grid { grid-template-columns: 1fr; } }
+
+  /* clickable game card */
+  .game { cursor: pointer; }
+  .game:hover { border-color: var(--accent); }
+  .game .game-head button { cursor: default; }
+
+  /* live status inline in the games list */
+  .live-status { font-size: .85rem; font-weight: 600; }
+  .live-status.live { color: var(--red); }
+  .live-status.final { color: var(--dim); }
+  .live-status.postponed { color: var(--dim); }
+
+  /* box score modal */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.7);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 40px 16px; overflow-y: auto; z-index: 1000;
+  }
+  .modal-box {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; max-width: 720px; width: 100%;
+    padding: 24px; position: relative;
+  }
+  .modal-close {
+    position: absolute; top: 16px; right: 16px;
+    background: var(--card); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; width: 32px; height: 32px;
+    cursor: pointer; font-size: 1rem;
+  }
+  .modal-title { color: var(--accent); font-size: 1.2rem; font-weight: 700;
+                margin-bottom: 4px; }
+  .modal-score { font-size: 1.6rem; font-weight: 800; color: #fff;
+                margin: 8px 0; }
+  .modal-period { color: var(--dim); font-size: .85rem; margin-bottom: 16px; }
+  .linescore-table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; }
+  .linescore-table th, .linescore-table td {
+    text-align: center; padding: 5px 8px; font-size: .8rem;
+    border-bottom: 1px solid #222;
+  }
+  .linescore-table th { color: var(--accent); }
+  .linescore-table td.team-label { text-align: left; color: #fff; font-weight: 600; }
+  .linescore-table td.tot { color: var(--gold); font-weight: 700; }
 </style>
 </head>
 <body>
@@ -176,6 +229,8 @@
     <div id="acc-recent"></div>
   </div>
 </main>
+
+<div id="modal-root"></div>
 
 <script>
 const LIVE_POLL_MS = 60000;
@@ -224,10 +279,17 @@ async function apiFetch(url, opts) {
 }
 
 // ── live ticker ──────────────────────────────────────────────
+// keyed by game_id, refreshed every LIVE_POLL_MS — the Games tab reads
+// this to show real score/period on locked (live/final) cards instead
+// of a bare "Locked — LIVE" with no information.
+let liveByGame = {};
+
 async function loadTicker() {
   try {
     const data = await apiFetch(`/api/live/${sport()}`);
     const el = document.getElementById('ticker');
+    liveByGame = {};
+    data.forEach(g => { liveByGame[g.game_id] = g; });
     if (!data.length) { el.innerHTML = '<span class="loading">No games on the board.</span>'; return; }
     el.innerHTML = data.map(g => `
       <div class="tick">
@@ -235,10 +297,36 @@ async function loadTicker() {
         <div class="s">${g.away} ${g.away_score} – ${g.home} ${g.home_score}</div>
         <div class="p">${g.period}</div>
       </div>`).join('');
+    refreshLiveStatusLabels();
   } catch (e) {
     document.getElementById('ticker').innerHTML =
       '<span class="loading">Live feed unavailable.</span>';
   }
+}
+
+// Updates just the status label on already-rendered game cards from
+// the latest ticker poll, without a full games re-fetch/re-render
+// (which would collapse any open prediction panels).
+function refreshLiveStatusLabels() {
+  Object.entries(liveByGame).forEach(([gid, live]) => {
+    const label = document.getElementById('livelabel-' + cssId(gid));
+    if (label) label.innerHTML = liveStatusHtml(live);
+  });
+}
+
+function liveStatusHtml(live) {
+  if (!live) return '';
+  const cls = (live.status || '').toLowerCase();
+  if (cls === 'live') {
+    return `<span class="live-status live">🔴 LIVE · ${live.away} ${live.away_score} – ${live.home} ${live.home_score} · ${live.period}</span>`;
+  }
+  if (cls === 'final') {
+    return `<span class="live-status final">FINAL · ${live.away} ${live.away_score} – ${live.home} ${live.home_score}</span>`;
+  }
+  if (cls === 'postponed') {
+    return `<span class="live-status postponed">POSTPONED</span>`;
+  }
+  return '';
 }
 
 // ── games list ───────────────────────────────────────────────
@@ -255,19 +343,21 @@ async function loadGames() {
       // button instead of inviting an error. Dev override lives at
       // /api/predict/{id}?force=true via curl — deliberately not in UI.
       const locked = (g.status || '').toLowerCase() !== 'scheduled';
+      const alreadyPredicted = !!g.prediction;
       const btn = locked
         ? `<button class="run locked" disabled
              title="Predictions must be generated before first pitch">
              Locked — ${(g.status || '').toUpperCase()}</button>`
-        : `<button class="run" onclick="predict('${g.game_id}')"
-             id="btn-${cssId(g.game_id)}">Run Prediction</button>`;
+        : `<button class="run" onclick="event.stopPropagation(); predict('${g.game_id}')"
+             id="btn-${cssId(g.game_id)}">${alreadyPredicted ? 'Re-run Prediction' : 'Run Prediction'}</button>`;
       return `
-      <div class="game" id="game-${cssId(g.game_id)}">
+      <div class="game" id="game-${cssId(g.game_id)}" onclick="openBoxscore('${g.game_id}')">
         <div class="game-head">
           <div>
             <div class="matchup">${g.away} @ ${g.home}</div>
             <div class="meta">${g.time} · ${g.venue} ·
               ${g.starter_confirmed ? 'SP confirmed' : 'SP not confirmed → rotation avg'}</div>
+            <div class="meta" id="livelabel-${cssId(g.game_id)}">${liveStatusHtml(liveByGame[g.game_id])}</div>
           </div>
           <div class="spacer"></div>
           ${btn}
@@ -275,6 +365,15 @@ async function loadGames() {
         <div class="pred" id="pred-${cssId(g.game_id)}" style="display:none"></div>
       </div>`;
     }).join('');
+
+    // Fill in any game that already has a stored prediction (and grade,
+    // if it's been settled) — so a locked/live/final game still shows
+    // what was called and how it graded, instead of an empty locked
+    // button with nothing underneath.
+    games.forEach(g => {
+      if (g.prediction) renderPrediction(g.game_id, g.prediction, g.settle);
+    });
+    refreshLiveStatusLabels();
   } catch (e) {
     el.innerHTML = `<span class="loading">Could not load games: ${e.message}</span>`;
   }
@@ -301,21 +400,63 @@ async function predict(gameId) {
 function renderPrediction(gameId, p, settled) {
   const el = document.getElementById('pred-' + cssId(gameId));
   el.style.display = '';
+  el.onclick = (e) => e.stopPropagation();
   const winLabel = { strong_lean: 'STRONG FAVORITE', lean: 'MODERATE LEAN',
                      toss_up: 'TOSS-UP' }[p.win_confidence] || 'TOSS-UP';
   const marginLabel = { high: 'TIGHT MARGIN', medium: 'MODERATE MARGIN',
                         high_variance: 'WIDE MARGIN RANGE' }[p.confidence];
 
-  // player projection table (top rows by first metric)
-  const projs = Object.entries(p.player_projections || {});
-  let metricCols = [];
-  if (projs.length) {
-    metricCols = Object.keys(projs[0][1]).filter(k => k !== 'name');
-    projs.sort((a, b) => (b[1][metricCols[0]]||0) - (a[1][metricCols[0]]||0));
+  // ── pitching matchup (MLB only — empty dict for NBA) ─────────
+  const pm = p.pitching_matchup || {};
+  let matchupHtml = '';
+  if (pm.home && pm.away) {
+    const box = (side, label) => `
+      <div class="pitcher-box">
+        <div class="team">${label}</div>
+        <div class="pname">${side.name}
+          <span class="tag ${side.confirmed ? 'confirmed' : 'rotation'}"
+                title="${side.confirmed
+                  ? 'Confirmed starting pitcher — modeled on his individual stats'
+                  : 'No confirmed starter yet — modeled on the rotation average'}">
+            ${side.confirmed ? 'CONFIRMED SP' : 'ROTATION AVG'}</span>
+        </div>
+        <div class="pstats">ERA ${side.era} · WHIP ${side.whip} · K/9 ${side.k_per_9}</div>
+      </div>`;
+    matchupHtml = `
+      <div class="section-title" style="margin-top:14px">Pitching Matchup</div>
+      <div class="matchup-grid">
+        ${box(pm.away, p.away_team)}
+        ${box(pm.home, p.home_team)}
+      </div>`;
   }
+
+  // ── player projection table ──────────────────────────────────
+  // Explicit column order + labels. hit_pct/rbi_pct are conversion
+  // percentages — the % of the 10,000 sims where the batter recorded
+  // at least one hit / at least one RBI (avg columns answer "how
+  // many", pct columns answer "how likely at least one").
+  const COL_DEFS = [
+    { key: 'hits',       label: 'Hits (avg)' },
+    { key: 'hit_pct',    label: 'Hit %',  pct: true },
+    { key: 'rbis',       label: 'RBIs (avg)' },
+    { key: 'rbi_pct',    label: 'RBI %',  pct: true },
+    { key: 'strikeouts', label: 'K (avg)' },
+    { key: 'points',     label: 'PTS' },
+    { key: 'assists',    label: 'AST' },
+    { key: 'rebounds',   label: 'REB' },
+  ];
+  const projs = Object.entries(p.player_projections || {});
+  const present = new Set();
+  projs.forEach(([, pr]) => Object.keys(pr).forEach(k => present.add(k)));
+  const cols = COL_DEFS.filter(c => present.has(c.key));
+  if (cols.length) {
+    const sortKey = cols[0].key;
+    projs.sort((a, b) => (b[1][sortKey] || 0) - (a[1][sortKey] || 0));
+  }
+  const fmt = (val, col) => val == null ? '' : (col.pct ? `${val}%` : val);
   const tableRows = projs.slice(0, 10).map(([pid, pr]) => `
-      <tr><td>${pr.name}</td>${metricCols.map(m =>
-        `<td>${pr[m] ?? ''}</td>`).join('')}</tr>`).join('');
+      <tr><td>${pr.name}</td>${cols.map(c =>
+        `<td>${fmt(pr[c.key], c)}</td>`).join('')}</tr>`).join('');
 
   el.innerHTML = `
     <div class="winbar-wrap">
@@ -329,6 +470,7 @@ function renderPrediction(gameId, p, settled) {
         <span>${p.away_team} ${p.away_win_pct}%</span>
       </div>
     </div>
+    ${matchupHtml}
     <div class="section-title" style="margin-top:14px">Predicted Score (Median)
       <span class="badge ${p.confidence}" style="margin-left:8px" title="How wide the projected final score range is">${marginLabel}</span>
     </div>
@@ -345,7 +487,7 @@ function renderPrediction(gameId, p, settled) {
       </div>
     </div>
     <table>
-      <tr><th>Player</th>${metricCols.map(m => `<th>${m}</th>`).join('')}</tr>
+      <tr><th>Player</th>${cols.map(c => `<th title="${c.pct ? 'Percent of simulations with at least one' : 'Average across all simulations'}">${c.label}</th>`).join('')}</tr>
       ${tableRows}
     </table>
     <div class="simmeta">Simulations: ${p.simulations_run.toLocaleString()}
@@ -399,6 +541,83 @@ function renderSettled(gameId, s) {
         ${s.score_range_correct ? '✅' : '❌'} Score Range</span><br>
       Player totals within ±20% band: <strong>${s.player_accuracy_pct}%</strong>
     </div>`;
+}
+
+// ── box score modal ─────────────────────────────────────────────
+async function openBoxscore(gameId) {
+  const names = gameNames[gameId] || {};
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-overlay" id="modal-overlay" onclick="if(event.target.id==='modal-overlay') closeBoxscore()">
+      <div class="modal-box">
+        <button class="modal-close" onclick="closeBoxscore()">✕</button>
+        <div class="modal-title">${names.away || ''} @ ${names.home || ''}</div>
+        <div class="loading">Loading box score…</div>
+      </div>
+    </div>`;
+  document.addEventListener('keydown', escCloseBoxscore);
+
+  try {
+    const box = await apiFetch(`/api/boxscore/${gameId}?sport=${sport()}`);
+    renderBoxscore(gameId, box);
+  } catch (e) {
+    const box = document.querySelector('#modal-root .modal-box');
+    if (box) box.insertAdjacentHTML('beforeend',
+      `<div class="loading">No box score available yet${e.message ? ' — ' + e.message : ''}.</div>`);
+  }
+}
+
+function closeBoxscore() {
+  document.getElementById('modal-root').innerHTML = '';
+  document.removeEventListener('keydown', escCloseBoxscore);
+}
+
+function escCloseBoxscore(e) { if (e.key === 'Escape') closeBoxscore(); }
+
+function renderBoxscore(gameId, box) {
+  const names = gameNames[gameId] || {};
+  const awayName = names.away || 'Away';
+  const homeName = names.home || 'Home';
+
+  let lineScoreHtml = '';
+  if (box.line_score && box.line_score.length) {
+    const cols = box.line_score.map(p => `<th>${p.label}</th>`).join('');
+    const homeCells = box.line_score.map(p => `<td>${p.home}</td>`).join('');
+    const awayCells = box.line_score.map(p => `<td>${p.away}</td>`).join('');
+    lineScoreHtml = `
+      <table class="linescore-table">
+        <tr><th></th>${cols}<th>T</th></tr>
+        <tr><td class="team-label">${awayName}</td>${awayCells}<td class="tot">${box.away_score}</td></tr>
+        <tr><td class="team-label">${homeName}</td>${homeCells}<td class="tot">${box.home_score}</td></tr>
+      </table>`;
+  }
+
+  const players = Object.entries(box.player_stats || {});
+  let metricCols = [];
+  if (players.length) {
+    const allMetrics = new Set();
+    players.forEach(([, s]) => Object.keys(s).forEach(k => { if (!k.startsWith('_')) allMetrics.add(k); }));
+    metricCols = Array.from(allMetrics);
+    players.sort((a, b) => (b[1][metricCols[0]] || 0) - (a[1][metricCols[0]] || 0));
+  }
+  const playerRows = players.map(([pid, s]) => `
+      <tr><td>${s._name || pid}</td>${metricCols.map(m => `<td>${s[m] ?? ''}</td>`).join('')}</tr>`).join('');
+  const playerTableHtml = players.length ? `
+    <div class="section-title" style="margin-top:14px">Box Score</div>
+    <table>
+      <tr><th>Player</th>${metricCols.map(m => `<th>${m}</th>`).join('')}</tr>
+      ${playerRows}
+    </table>` : `<div class="meta" style="margin-top:14px">No player stats available yet.</div>`;
+
+  const box_el = document.querySelector('#modal-root .modal-box');
+  if (!box_el) return;
+  box_el.innerHTML = `
+    <button class="modal-close" onclick="closeBoxscore()">✕</button>
+    <div class="modal-title">${awayName} @ ${homeName}</div>
+    <div class="modal-score">${awayName} ${box.away_score} – ${homeName} ${box.home_score}</div>
+    ${box.period ? `<div class="modal-period">${box.period}</div>` : ''}
+    ${lineScoreHtml}
+    ${playerTableHtml}`;
 }
 
 // ── accuracy page ────────────────────────────────────────────

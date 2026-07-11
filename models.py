@@ -151,6 +151,11 @@ class SimulationOutput:
     simulations_run: int
     generated_at: str
     win_confidence: str = "toss_up" # winner confidence: 'strong_lean' | 'lean' | 'toss_up'
+    # MLB only — {'home': {name, era, whip, k_per_9, confirmed},
+    #             'away': {...}}. Empty dict for NBA. Default keeps old
+    # cached payloads (predicted before this field existed)
+    # deserializable via SimulationOutput(**payload).
+    pitching_matchup: dict = field(default_factory=dict)
 
 
 # ── Settling ──────────────────────────────────────────────────────────

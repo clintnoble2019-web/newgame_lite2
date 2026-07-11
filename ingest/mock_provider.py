@@ -234,11 +234,13 @@ class MockProvider(DataProvider):
                         if team.confirmed_starter and p.player_id == team.confirmed_starter.player_id:
                             player_stats[p.player_id] = {
                                 "strikeouts": max(0, int(rng.gauss(p.k_per_9 * 0.65, 2))),
+                                "_name": p.name,
                             }
                     elif p.lineup_spot:
                         player_stats[p.player_id] = {
                             "hits": max(0, int(rng.gauss(p.obp * 4.3, 1.0))),
                             "rbis": max(0, int(rng.gauss(p.slg * 1.8, 1.0))),
+                            "_name": p.name,
                         }
         else:
             home_score = max(70, int(rng.gauss(ctx.home_team.team_ortg, 9)))
@@ -252,7 +254,28 @@ class MockProvider(DataProvider):
                         "points": max(0, int(rng.gauss(p.ppg, p.ppg * 0.35 + 1))),
                         "assists": max(0, int(rng.gauss(p.apg, 1.5))),
                         "rebounds": max(0, int(rng.gauss(p.rpg, 2.0))),
+                        "_name": p.name,
                     }
 
         return {"home_score": home_score, "away_score": away_score,
                 "player_stats": player_stats}
+
+    def get_boxscore(self, game_id: str, sport: Sport) -> dict:
+        """Dev/testing only — fakes a line score that sums to the same
+        final as get_final_boxscore so the modal has something real to
+        render locally without burning API calls."""
+        final = self.get_final_boxscore(game_id, sport)
+        rng = _rng_for(game_id + "_linescore")
+        periods = 9 if sport == Sport.MLB else 4
+        home_left, away_left = final["home_score"], final["away_score"]
+        line_score = []
+        for i in range(periods):
+            remaining = periods - i
+            h = home_left if i == periods - 1 else rng.randint(0, max(0, home_left))
+            a = away_left if i == periods - 1 else rng.randint(0, max(0, away_left))
+            home_left -= h
+            away_left -= a
+            label = str(i + 1) if sport == Sport.MLB else f"Q{i + 1}"
+            line_score.append({"label": label, "home": h, "away": a})
+        period = ("FINAL" if sport == Sport.MLB else "FINAL")
+        return {**final, "line_score": line_score, "period": period}

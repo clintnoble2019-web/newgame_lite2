@@ -321,3 +321,62 @@ class FreeProvider(DataProvider):
         return {"home_score": g.get("home_team_score", 0),
                 "away_score": g.get("visitor_team_score", 0),
                 "player_stats": {}}
+
+    def get_boxscore(self, game_id: str, sport: Sport) -> dict:
+        """Same underlying calls as get_final_boxscore — the MLB Stats
+        API's feed/live endpoint updates continuously during the game,
+        not just after it, so this works for LIVE games too, plus it
+        carries a real per-inning linescore (unlike the settle-pipeline
+        version above, which never needed one)."""
+        if sport == Sport.MLB:
+            r = requests.get(f"{MLB_BASE}.1/game/{game_id}/feed/live",
+                             timeout=20)
+            r.raise_for_status()
+            live = r.json()["liveData"]
+            linescore = live["linescore"]
+            lines = linescore["teams"]
+            player_stats = {}
+            for side_key, side_name in (("home", "home"), ("away", "away")):
+                box = live["boxscore"]["teams"][side_key]["players"]
+                for pid_key, pdata in box.items():
+                    pid = pid_key.replace("ID", "")
+                    person = pdata.get("person", {})
+                    bat = pdata.get("stats", {}).get("batting", {})
+                    pit = pdata.get("stats", {}).get("pitching", {})
+                    stats = {}
+                    if bat:
+                        stats["hits"] = bat.get("hits", 0)
+                        stats["rbis"] = bat.get("rbi", 0)
+                    if pit:
+                        stats["strikeouts"] = pit.get("strikeOuts", 0)
+                    if stats:
+                        stats["_name"] = person.get("fullName", pid)
+                        stats["_team"] = side_name
+                        player_stats[pid] = stats
+
+            innings = linescore.get("innings", [])
+            line_score = [{
+                "label": str(i.get("num", idx + 1)),
+                "home": (i.get("home", {}) or {}).get("runs", 0) or 0,
+                "away": (i.get("away", {}) or {}).get("runs", 0) or 0,
+            } for idx, i in enumerate(innings)]
+
+            period_label = None
+            if linescore.get("currentInning"):
+                state = linescore.get("inningState", "")
+                period_label = f"{state} {linescore['currentInning']}".strip()
+
+            return {"home_score": lines["home"].get("runs", 0),
+                    "away_score": lines["away"].get("runs", 0),
+                    "player_stats": player_stats,
+                    "line_score": line_score,
+                    "period": period_label}
+
+        # NBA free tier — final score only, no live box/line score.
+        r = requests.get(f"{BDL_BASE}/games/{game_id}",
+                         headers=BDL_HEADERS, timeout=15)
+        r.raise_for_status()
+        g = r.json()["data"]
+        return {"home_score": g.get("home_team_score", 0),
+                "away_score": g.get("visitor_team_score", 0),
+                "player_stats": {}, "line_score": [], "period": None}

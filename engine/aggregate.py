@@ -83,18 +83,28 @@ def run_simulation(context: GameContext,
     lo_h, med_h, hi_h = _trimmed([r.home_score for r in results])
     lo_a, med_a, hi_a = _trimmed([r.away_score for r in results])
 
-    # player projections: mean per stat across iterations that included them
+    # player projections: mean per stat across iterations that included
+    # them, PLUS conversion percentages — the % of simulations in which
+    # the player recorded at least one hit / at least one RBI. The mean
+    # says "how many"; the pct says "how likely at least one" — a .9
+    # avg-hits batter might convert a hit in 62% of sims, and that 62%
+    # is the number a bettor/viewer actually wants.
     accum: dict = {}
     for r in results:
         for pid, stats in r.player_stats.items():
             entry = accum.setdefault(
                 pid, {"name": stats.get("name", pid),
-                      "sums": {}, "count": 0})
+                      "sums": {}, "count": 0,
+                      "hit_games": 0, "rbi_games": 0})
             entry["count"] += 1
             for metric, val in stats.items():
                 if metric == "name":
                     continue
                 entry["sums"][metric] = entry["sums"].get(metric, 0) + val
+            if stats.get("hits", 0) >= 1:
+                entry["hit_games"] += 1
+            if stats.get("rbis", 0) >= 1:
+                entry["rbi_games"] += 1
 
     projections = {}
     for pid, entry in accum.items():
@@ -103,7 +113,39 @@ def run_simulation(context: GameContext,
         proj = {"name": entry["name"]}
         for metric, total in entry["sums"].items():
             proj[metric] = round(total / runs, 1)
+        # conversion pcts only for batters (they carry a 'hits' metric);
+        # denominator is ALL runs, matching how the means above are
+        # computed — a batter who missed an iteration converted nothing
+        # in it. Named *_pct so the settle pipeline never tries to grade
+        # them against boxscore actuals (it only settles metrics that
+        # appear in the actual stat rows: hits/rbis/strikeouts).
+        if "hits" in entry["sums"]:
+            proj["hit_pct"] = round(entry["hit_games"] / runs * 100, 1)
+            proj["rbi_pct"] = round(entry["rbi_games"] / runs * 100, 1)
         projections[pid] = proj
+
+    # ── pitching matchup (MLB only) — deterministic display block ────
+    # Mirrors _resolve_pitcher's decision rule (confirmed starter ->
+    # individual stats, else rotation average) but WITHOUT the per-
+    # iteration injury roll: this is "who we modeled the matchup on",
+    # not one iteration's availability outcome.
+    pitching_matchup = {}
+    if context.sport == Sport.MLB:
+        def _pitcher_block(team):
+            sp = team.confirmed_starter
+            if sp is not None:
+                return {"name": sp.name, "confirmed": True,
+                        "era": round(sp.era or config.LEAGUE_AVG_ERA, 2),
+                        "whip": round(sp.whip or config.LEAGUE_AVG_WHIP, 2),
+                        "k_per_9": round(sp.k_per_9 or 8.50, 2)}
+            return {"name": f"{team.name} Rotation Avg", "confirmed": False,
+                    "era": round(team.rotation_avg_era or config.LEAGUE_AVG_ERA, 2),
+                    "whip": round(team.rotation_avg_whip or config.LEAGUE_AVG_WHIP, 2),
+                    "k_per_9": round(team.rotation_avg_k9 or 8.50, 2)}
+        pitching_matchup = {
+            "home": _pitcher_block(context.home_team),
+            "away": _pitcher_block(context.away_team),
+        }
 
     width = max(hi_h - lo_h, hi_a - lo_a)
 
@@ -121,4 +163,5 @@ def run_simulation(context: GameContext,
         win_confidence=_win_confidence(home_pct),
         simulations_run=runs,
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        pitching_matchup=pitching_matchup,
     )
