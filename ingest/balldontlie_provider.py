@@ -248,18 +248,34 @@ class BallDontLieProvider(DataProvider):
         data = self._get(sport, f"games/{game_id}")
         shell = self._parse_game_shell(data.get("data", data), sport)
 
-        lineup_data = self._get(sport, "lineups",
-                                params={"game_ids[]": game_id})
-        self._apply_lineup(shell, lineup_data.get("data", []), sport)
+        # WNBA DISCOVERY (2026-07-13, live 404): BDL's WNBA API has no
+        # /lineups endpoint at all — that's an NBA/MLB feature. Treat a
+        # failed lineups call (404 or otherwise) as "no lineup posted"
+        # instead of failing the whole prediction; the active-roster
+        # fallback below fills the rotation with real players.
+        try:
+            lineup_data = self._get(sport, "lineups",
+                                    params={"game_ids[]": game_id})
+            self._apply_lineup(shell, lineup_data.get("data", []), sport)
+        except requests.RequestException:
+            pass   # no lineups available for this sport/game
 
-        # Live lineup wasn't posted -> use real roster names instead of
-        # fully synthetic placeholders (MLB only for now).
+        # Live lineup wasn't posted (or the sport has no lineups
+        # endpoint) -> use real roster names instead of fully
+        # synthetic placeholders. MLB checks for batters; basketball
+        # checks for an empty roster (basketball rosters come ONLY
+        # from lineups, so without this, WNBA would simulate a single
+        # synthetic "Team Avg" player).
+        for team in (shell.home_team, shell.away_team):
+            if sport == Sport.MLB:
+                needs_fallback = not any(not p.is_pitcher
+                                         for p in team.roster)
+            else:
+                needs_fallback = not team.roster
+            if needs_fallback:
+                self._apply_active_roster_fallback(team, sport)
+
         if sport == Sport.MLB:
-            for team in (shell.home_team, shell.away_team):
-                has_batters = any(not p.is_pitcher for p in team.roster)
-                if not has_batters:
-                    self._apply_active_roster_fallback(team, sport)
-
             # PROBABLE STARTERS (added 2026-07-12): pre-game, the BDL
             # lineups endpoint is empty by design, so confirmed_starter
             # was always None until first pitch -> every pre-game
@@ -283,36 +299,58 @@ class BallDontLieProvider(DataProvider):
 
     def _apply_active_roster_fallback(self, team: TeamData, sport: Sport):
         """Real-roster fallback tier for when the live lineup isn't
-        posted yet. Pulls the team's active players (real names) and
-        assigns the first 9 non-pitchers to lineup spots 1-9 —
-        alphabetical/API order, not a real batting order, but real
-        identities. Stats still hydrate normally afterward via
-        _hydrate_player_stats (recent -> career -> team_avg chain)."""
-        try:
-            data = self._get(sport, "players/active",
-                             params={"team_ids[]": team.team_id})
-        except requests.RequestException:
+        posted (MLB pre-game) or the sport has no lineups endpoint at
+        all (WNBA). Pulls the team's active players (real names) so
+        the sim runs on real identities. Stats still hydrate normally
+        afterward via _hydrate_player_stats (recent -> career ->
+        team_avg chain).
+
+        MLB: first 9 non-pitchers into lineup spots 1-9.
+        Basketball (NBA/WNBA): first 10 players as the rotation —
+        real per-game averages from hydration drive usage/minutes,
+        so API order here doesn't skew the sim.
+
+        VERIFY (WNBA): 'players/active' is confirmed for MLB; if the
+        WNBA API lacks it, we retry the plain 'players' endpoint with
+        the same team filter before giving up."""
+        data = None
+        for path in ("players/active", "players"):
+            try:
+                data = self._get(sport, path,
+                                 params={"team_ids[]": team.team_id})
+                break
+            except requests.RequestException:
+                continue
+        if data is None:
             return   # falls through to the fully synthetic placeholder
-                     # fallback already built into engine/mlb_sim.py
+                     # fallback already built into the engines
 
         players = [p for p in data.get("data", [])
                   if str(p.get("team", {}).get("id", "")) == team.team_id]
         if not players:
             return
 
-        spot = 1
-        for p in players:
-            position = (p.get("position") or "").upper()
-            if "PITCHER" in position or position in ("P", "SP", "RP"):
-                continue   # bullpen/rotation avg handles pitchers separately
-            if spot > 9:
-                break
-            pid = str(p.get("id", ""))
-            name = (f"{p.get('first_name','')} "
-                   f"{p.get('last_name','')}").strip() or pid
-            team.roster.append(PlayerStats(
-                player_id=pid, name=name, sport=sport, lineup_spot=spot))
-            spot += 1
+        if sport == Sport.MLB:
+            spot = 1
+            for p in players:
+                position = (p.get("position") or "").upper()
+                if "PITCHER" in position or position in ("P", "SP", "RP"):
+                    continue   # bullpen/rotation avg handles pitchers separately
+                if spot > 9:
+                    break
+                pid = str(p.get("id", ""))
+                name = (f"{p.get('first_name','')} "
+                       f"{p.get('last_name','')}").strip() or pid
+                team.roster.append(PlayerStats(
+                    player_id=pid, name=name, sport=sport, lineup_spot=spot))
+                spot += 1
+        else:
+            for p in players[:10]:
+                pid = str(p.get("id", ""))
+                name = (f"{p.get('first_name','')} "
+                       f"{p.get('last_name','')}").strip() or pid
+                team.roster.append(PlayerStats(
+                    player_id=pid, name=name, sport=sport))
 
     # ── probable starters (MLB StatsAPI) ─────────────────────────────
     def _apply_probable_starters(self, shell: GameContext):
