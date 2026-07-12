@@ -91,7 +91,7 @@ def settle_game(prediction: SimulationOutput,
         if not proj:
             continue
         for metric, actual_val in actual_stats.items():
-            if metric == "_name":
+          if metric.startswith("_"):
                 continue
             projected_val = proj.get(metric)
             if projected_val is None or projected_val <= 0:

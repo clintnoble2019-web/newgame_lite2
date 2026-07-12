@@ -325,7 +325,9 @@ class BallDontLieProvider(DataProvider):
         """GOAT tier — Game Player Stats -> settling pipeline input."""
         game = self._get(sport, f"games/{game_id}").get("data", {})
         stats = self._get(sport, "stats", params={"game_ids[]": game_id})
-        return self._parse_boxscore(game, stats.get("data", []), sport)
+        return {"home_score": home_score, "away_score": away_score,
+                "status": _game_status(game.get("status", "")).value,
+                "player_stats": player_stats}
 
     def get_boxscore(self, game_id: str, sport: Sport) -> dict:
         """CONFIRMED against BallDontLie's published MLB OpenAPI spec
@@ -638,6 +640,7 @@ class BallDontLieProvider(DataProvider):
             if out:
                 out["_name"] = name   # underscore prefix: metadata, not a stat
                 player_stats[pid] = out
-
+               out["_name"] = (f"{player.get('first_name', '')} "
+                             f"{player.get('last_name', '')}").strip()
         return {"home_score": home_score, "away_score": away_score,
                 "player_stats": player_stats}
