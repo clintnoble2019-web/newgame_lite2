@@ -90,6 +90,11 @@ LEAGUE_AVG_PACE = 99.0          # possessions per team per 48 min
 LEAGUE_AVG_ORTG_WNBA = 101.0
 LEAGUE_AVG_DRTG_WNBA = 101.0
 LEAGUE_AVG_PACE_WNBA = 80.0     # possessions per team per 40 min (raw)
+LEAGUE_AVG_PPG_WNBA = 81.0      # points per team per game — baseline
+                                # for deriving team ORtg/DRtg from real
+                                # points scored/allowed (WNBA has no
+                                # advanced-stats endpoint)
+LEAGUE_AVG_PPG_WNBA = 81.0      # league-average points per team per game
 OT_LENGTH_FACTOR = 5 / 48       # OT possessions = pace * this
 
 # ── Confidence signal thresholds (score range width) ─────────────────

@@ -88,9 +88,13 @@ def _game_status(raw: str) -> GameStatus:
     """BallDontLie's MLB status field returns ESPN-style codes like
     'STATUS_FINAL', 'STATUS_SCHEDULED', 'STATUS_IN_PROGRESS'. NBA uses
     plain text ('Final', '2nd Qtr') or an ISO timestamp for games not
-    yet started. Normalize all of these defensively."""
+    yet started. WNBA uses ESPN abstract states: 'pre' / 'in' / 'post'
+    (VERIFIED live 2026-07-13 — every completed WNBA game is 'post',
+    never 'final'; without this mapping completed games classified as
+    LIVE and the settle guard blocked WNBA settling entirely).
+    Normalize all of these defensively."""
     r = (raw or "").strip().lower().replace("status_", "")
-    if r in ("final", "closed", "completed"):
+    if r in ("final", "closed", "completed", "post"):
         return GameStatus.FINAL
     if r in ("", "scheduled", "pre", "preview"):
         return GameStatus.SCHEDULED
@@ -98,7 +102,7 @@ def _game_status(raw: str) -> GameStatus:
         return GameStatus.SCHEDULED
     if "postponed" in r or "cancel" in r:
         return GameStatus.POSTPONED
-    return GameStatus.LIVE   # in_progress, 2nd_qtr, top_5th, etc.
+    return GameStatus.LIVE   # in_progress, in, 2nd_qtr, top_5th, etc.
 
 
 def _injury_status(raw: str) -> InjuryStatus:
@@ -292,10 +296,108 @@ class BallDontLieProvider(DataProvider):
 
         self._hydrate_team_stats(shell.home_team, sport)
         self._hydrate_team_stats(shell.away_team, sport)
-        for p in shell.home_team.roster + shell.away_team.roster:
-            self._hydrate_player_stats(p, sport)
+
+        if sport == Sport.WNBA:
+            # WNBA path (all VERIFIED live 2026-07-13): real injuries
+            # from player_injuries, and season averages derived by
+            # aggregating actual game logs from player_stats — the
+            # NBA season_averages/stats-advanced endpoints don't exist
+            # on the WNBA API at all.
+            for team in (shell.home_team, shell.away_team):
+                try:
+                    self._apply_wnba_injuries(team)
+                except requests.RequestException:
+                    pass   # injuries are a bonus signal, never fatal
+            try:
+                self._hydrate_wnba_players(
+                    shell.home_team.roster + shell.away_team.roster)
+            except requests.RequestException:
+                pass   # players keep defaults -> minutes-flat fallback
+        else:
+            for p in shell.home_team.roster + shell.away_team.roster:
+                self._hydrate_player_stats(p, sport)
 
         return shell
+
+    def _apply_wnba_injuries(self, team: TeamData):
+        """VERIFIED live 2026-07-13: GET /wnba/v1/player_injuries
+        ?team_ids[]=X returns [{player:{id,...}, status:'Day-To-Day',
+        return_date, comment}]. Map onto the roster via the existing
+        _INJURY_MAP so the LOCKED injury-weighting system runs on real
+        WNBA availability (e.g. Reese questionable = reduced capacity,
+        never removed from the roster)."""
+        data = self._get(Sport.WNBA, "player_injuries",
+                         params={"team_ids[]": team.team_id})
+        status_by_pid = {}
+        for row in data.get("data", []):
+            pid = str((row.get("player") or {}).get("id", ""))
+            if pid:
+                status_by_pid[pid] = _injury_status(row.get("status", ""))
+        if not status_by_pid:
+            return
+        for p in team.roster:
+            if p.player_id in status_by_pid:
+                p.injury_status = status_by_pid[p.player_id]
+
+    def _hydrate_wnba_players(self, players: list):
+        """Season averages derived from real game logs — the WNBA
+        equivalent of what season_averages does for NBA.
+
+        VERIFIED live 2026-07-13: GET /wnba/v1/player_stats
+        ?seasons[]=Y&player_ids[]=A&player_ids[]=B... returns one row
+        per player per game with pts/ast/reb/min (min is a string like
+        '33'; blk/turnover/pf can be null). Cursor pagination via
+        meta.next_cursor. One batched, paginated query covers both
+        rosters (~20 players x ~23 games = a few pages).
+
+        usage_rate is set to pts-per-minute so the sim's usage-share
+        formula (usage x minutes) distributes team points in proportion
+        to each player's REAL scoring — this is what separates Angel
+        Reese's projection from the 10th player on the bench."""
+        if not players:
+            return
+        by_pid = {p.player_id: p for p in players}
+        totals: dict = {}   # pid -> {'g':n,'pts':x,'ast':x,'reb':x,'min':x}
+
+        params = {"seasons[]": self.season, "per_page": 100,
+                  "player_ids[]": list(by_pid.keys())}
+        cursor = None
+        for _ in range(12):   # safety cap on pagination
+            if cursor is not None:
+                params["cursor"] = cursor
+            data = self._get(Sport.WNBA, "player_stats", params=params)
+            for row in data.get("data", []):
+                pid = str((row.get("player") or {}).get("id", ""))
+                if pid not in by_pid:
+                    continue
+                t = totals.setdefault(
+                    pid, {"g": 0, "pts": 0.0, "ast": 0.0,
+                          "reb": 0.0, "min": 0.0})
+                mins = _f(row.get("min"))
+                if mins <= 0:
+                    continue   # DNP rows don't dilute averages
+                t["g"] += 1
+                t["pts"] += _f(row.get("pts"))
+                t["ast"] += _f(row.get("ast"))
+                t["reb"] += _f(row.get("reb"))
+                t["min"] += mins
+            cursor = (data.get("meta") or {}).get("next_cursor")
+            if not cursor:
+                break
+
+        for pid, t in totals.items():
+            if t["g"] == 0:
+                continue
+            p = by_pid[pid]
+            g = t["g"]
+            p.games_played = g
+            p.ppg = round(t["pts"] / g, 1)
+            p.apg = round(t["ast"] / g, 1)
+            p.rpg = round(t["reb"] / g, 1)
+            p.minutes_proj = round(t["min"] / g, 1)
+            if p.minutes_proj > 0:
+                p.usage_rate = round(p.ppg / p.minutes_proj, 3)
+            p.data_source = "recent"
 
     def _apply_active_roster_fallback(self, team: TeamData, sport: Sport):
         """Real-roster fallback tier for when the live lineup isn't
@@ -345,7 +447,12 @@ class BallDontLieProvider(DataProvider):
                     player_id=pid, name=name, sport=sport, lineup_spot=spot))
                 spot += 1
         else:
-            for p in players[:10]:
+            # ALL active players, not an arbitrary first-N slice — the
+            # API's ordering isn't by importance (Reese wasn't first on
+            # the Dream's list), and hydrated real minutes/usage already
+            # weight the rotation correctly; deep-bench players with
+            # tiny minutes barely register in the usage shares.
+            for p in players:
                 pid = str(p.get("id", ""))
                 name = (f"{p.get('first_name','')} "
                        f"{p.get('last_name','')}").strip() or pid
@@ -514,13 +621,34 @@ class BallDontLieProvider(DataProvider):
             })
         return out
 
+    def _fetch_game_player_stats(self, game_id: str,
+                                 sport: Sport) -> list:
+        """Player stat rows for one game. MLB/NBA use /stats;
+        the WNBA API has no /stats route — player rows live at
+        /player_stats (VERIFIED live 2026-07-13), cursor-paginated."""
+        if sport != Sport.WNBA:
+            data = self._get(sport, "stats",
+                             params={"game_ids[]": game_id})
+            return data.get("data", [])
+        rows, cursor = [], None
+        params = {"game_ids[]": game_id, "per_page": 100}
+        for _ in range(5):
+            if cursor is not None:
+                params["cursor"] = cursor
+            data = self._get(sport, "player_stats", params=params)
+            rows.extend(data.get("data", []))
+            cursor = (data.get("meta") or {}).get("next_cursor")
+            if not cursor:
+                break
+        return rows
+
     def get_final_boxscore(self, game_id: str, sport: Sport) -> dict:
         """GOAT tier — Game Player Stats -> settling pipeline input.
         Returns _parse_boxscore output, which includes "status" — the
         last-out guard in /api/settle depends on that key."""
         game = self._get(sport, f"games/{game_id}").get("data", {})
-        stats = self._get(sport, "stats", params={"game_ids[]": game_id})
-        return self._parse_boxscore(game, stats.get("data", []), sport)
+        stat_rows = self._fetch_game_player_stats(game_id, sport)
+        return self._parse_boxscore(game, stat_rows, sport)
 
     def get_boxscore(self, game_id: str, sport: Sport) -> dict:
         """CONFIRMED against BallDontLie's published MLB OpenAPI spec
@@ -535,8 +663,8 @@ class BallDontLieProvider(DataProvider):
         Also works for LIVE games, not just FINAL — the stats endpoint
         returns whatever's accrued so far."""
         game = self._get(sport, f"games/{game_id}").get("data", {})
-        stats = self._get(sport, "stats", params={"game_ids[]": game_id})
-        box = self._parse_boxscore(game, stats.get("data", []), sport)
+        stat_rows = self._fetch_game_player_stats(game_id, sport)
+        box = self._parse_boxscore(game, stat_rows, sport)
 
         line_score = []
         if sport == Sport.MLB:
@@ -674,7 +802,50 @@ class BallDontLieProvider(DataProvider):
         the real team-level one, returning one row per team with both
         batting_obp and pitching_era populated. The team_ids[] filter
         doesn't appear to narrow results server-side (still returns
-        all 30 teams), so match by team_id client-side instead."""
+        all 30 teams), so match by team_id client-side instead.
+
+        WNBA (VERIFIED live 2026-07-13): no advanced-stats or team
+        season-stats endpoints exist, but the games endpoint returns
+        every game with final scores — so ORtg/DRtg are derived from
+        real points scored/allowed relative to league-average scoring,
+        and pace is proxied from combined scoring. Blowout-resistant
+        enough at 20+ games, and it's what actually moves the win
+        probability off 50/50."""
+        if sport == Sport.WNBA:
+            try:
+                data = self._get(sport, "games",
+                                 params={"seasons[]": self.season,
+                                        "team_ids[]": team.team_id,
+                                        "per_page": 100})
+            except requests.RequestException:
+                return
+            pf = pa = games = 0
+            for g in data.get("data", []):
+                if _game_status(g.get("status", "")) != GameStatus.FINAL:
+                    continue
+                home_j = g.get("home_team", {})
+                is_home = str(home_j.get("id", "")) == team.team_id
+                hs = _i(g.get("home_score"))
+                as_ = _i(g.get("away_score"))
+                if hs == 0 and as_ == 0:
+                    continue   # bad/empty row
+                pf += hs if is_home else as_
+                pa += as_ if is_home else hs
+                games += 1
+            if games < 3:
+                return   # too small a sample — keep league-avg defaults
+            avg_ppg = getattr(config, "LEAGUE_AVG_PPG_WNBA", 81.0)
+            pf_pg, pa_pg = pf / games, pa / games
+            team.team_ortg = round(
+                config.LEAGUE_AVG_ORTG_WNBA * (pf_pg / avg_ppg), 1)
+            team.team_drtg = round(
+                config.LEAGUE_AVG_DRTG_WNBA * (pa_pg / avg_ppg), 1)
+            # pace proxy: combined scoring vs league combined scoring
+            team.team_pace = round(
+                config.LEAGUE_AVG_PACE_WNBA
+                * ((pf_pg + pa_pg) / (2 * avg_ppg)), 1)
+            return
+
         if sport == Sport.MLB:
             try:
                 data = self._get(sport, "teams/season_stats",
