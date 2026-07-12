@@ -16,6 +16,7 @@ from typing import Optional
 class Sport(Enum):
     MLB = "MLB"
     NBA = "NBA"
+    WNBA = "WNBA"
 
 
 class GameStatus(Enum):

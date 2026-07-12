@@ -79,6 +79,17 @@ HIT_TYPE_BASE = {"single": 0.66, "double": 0.20, "triple": 0.02, "hr": 0.12}
 LEAGUE_AVG_ORTG = 113.0
 LEAGUE_AVG_DRTG = 113.0
 LEAGUE_AVG_PACE = 99.0          # possessions per team per 48 min
+
+# WNBA equivalents (40-minute games, lower scoring environment).
+# Used as fallbacks + PPP normalization baseline when sport == WNBA.
+# PACE is possessions per team per 40-min game (raw, ~80), NOT the
+# per-48-normalized figure some tools publish (~96). VERIFY on first
+# live pull: check the magnitude of BDL's WNBA team pace — if hydrated
+# values come back ~96+ they're per-48-normalized and the sim's
+# regulation scaling needs a convention flag.
+LEAGUE_AVG_ORTG_WNBA = 101.0
+LEAGUE_AVG_DRTG_WNBA = 101.0
+LEAGUE_AVG_PACE_WNBA = 80.0     # possessions per team per 40 min (raw)
 OT_LENGTH_FACTOR = 5 / 48       # OT possessions = pace * this
 
 # ── Confidence signal thresholds (score range width) ─────────────────

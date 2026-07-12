@@ -14,7 +14,24 @@ One iteration = one full game simulated QUARTER BY QUARTER (LOCKED).
 
 import random
 import config
-from models import GameContext, PlayerStats, IterationResult
+from models import GameContext, PlayerStats, IterationResult, Sport
+
+
+def _league_params(sport) -> dict:
+    """WNBA plays 4x10-minute quarters (40-min regulation) in a lower
+    scoring environment; NBA plays 4x12 (48-min). Pace stats are
+    per-regulation-game in both conventions, so possessions per period
+    scale by minutes/regulation. PPP normalizes against the correct
+    league-average DRtg or cross-league ratings skew every projection."""
+    if sport == Sport.WNBA:
+        return {"quarter_min": 10, "regulation_min": 40,
+                "avg_ortg": config.LEAGUE_AVG_ORTG_WNBA,
+                "avg_drtg": config.LEAGUE_AVG_DRTG_WNBA,
+                "avg_pace": config.LEAGUE_AVG_PACE_WNBA}
+    return {"quarter_min": 12, "regulation_min": 48,
+            "avg_ortg": config.LEAGUE_AVG_ORTG,
+            "avg_drtg": config.LEAGUE_AVG_DRTG,
+            "avg_pace": config.LEAGUE_AVG_PACE}
 
 
 def _availability_roll(player: PlayerStats, rng: random.Random) -> float:
@@ -42,11 +59,13 @@ def _active_rotation(team, rng: random.Random) -> list[tuple]:
     return rotation
 
 
-def _points_per_possession(ortg: float, opp_drtg: float) -> float:
-    """Expected PPP = own ORtg adjusted by opponent defense."""
-    ortg = ortg or config.LEAGUE_AVG_ORTG
-    opp_drtg = opp_drtg or config.LEAGUE_AVG_DRTG
-    return (ortg / 100.0) * (opp_drtg / config.LEAGUE_AVG_DRTG)
+def _points_per_possession(ortg: float, opp_drtg: float,
+                           lp: dict) -> float:
+    """Expected PPP = own ORtg adjusted by opponent defense, normalized
+    against the correct league's average DRtg (NBA vs WNBA)."""
+    ortg = ortg or lp["avg_ortg"]
+    opp_drtg = opp_drtg or lp["avg_drtg"]
+    return (ortg / 100.0) * (opp_drtg / lp["avg_drtg"])
 
 
 def _sample_possession(ppp: float, rng: random.Random) -> int:
@@ -69,11 +88,12 @@ def _sample_possession(ppp: float, rng: random.Random) -> int:
 
 def _quarter(off_rotation: list, ortg: float, opp_drtg: float,
              pace: float, minutes: float, foul_trouble: set,
-             stat_lines: dict, rng: random.Random) -> int:
+             stat_lines: dict, rng: random.Random, lp: dict) -> int:
     """One team's offensive output for one period."""
     possessions = max(8, int(rng.gauss(
-        (pace or config.LEAGUE_AVG_PACE) * (minutes / 48.0), 1.8)))
-    ppp = _points_per_possession(ortg, opp_drtg)
+        (pace or lp["avg_pace"])
+        * (minutes / lp["regulation_min"]), 1.8)))
+    ppp = _points_per_possession(ortg, opp_drtg, lp)
 
     # usage shares (injury capacity + foul trouble reduce share)
     shares = []
@@ -105,9 +125,10 @@ def _quarter(off_rotation: list, ortg: float, opp_drtg: float,
 
 
 def _accumulate_hustle(rotation: list, stat_lines: dict,
-                       minutes: float, rng: random.Random):
-    """Assists + rebounds per period, scaled from per-game averages."""
-    frac = minutes / 48.0
+                       minutes: float, rng: random.Random, lp: dict):
+    """Assists + rebounds per period, scaled from per-game averages
+    over the correct regulation length (48 NBA / 40 WNBA)."""
+    frac = minutes / lp["regulation_min"]
     for p, cap in rotation:
         sl = stat_lines.setdefault(
             p.player_id,
@@ -123,6 +144,7 @@ def simulate_nba_game(context: GameContext,
 
     home_rot = _active_rotation(home, rng)
     away_rot = _active_rotation(away, rng)
+    lp = _league_params(context.sport)
 
     home_score = away_score = 0
     stat_lines: dict = {}
@@ -130,8 +152,8 @@ def simulate_nba_game(context: GameContext,
     foul_trouble: set = set()
 
     # home court edge: small ORtg bump
-    home_ortg = (home.team_ortg or config.LEAGUE_AVG_ORTG) + 1.5
-    away_ortg = away.team_ortg or config.LEAGUE_AVG_ORTG
+    home_ortg = (home.team_ortg or lp["avg_ortg"]) + 1.5
+    away_ortg = away.team_ortg or lp["avg_ortg"]
     if context.back_to_back_home:
         home_ortg -= 1.8
     if context.back_to_back_away:
@@ -139,11 +161,13 @@ def simulate_nba_game(context: GameContext,
 
     for q in range(1, 5):
         h = _quarter(home_rot, home_ortg, away.team_drtg,
-                     home.team_pace, 12, foul_trouble, stat_lines, rng)
+                     home.team_pace, lp["quarter_min"], foul_trouble,
+                     stat_lines, rng, lp)
         a = _quarter(away_rot, away_ortg, home.team_drtg,
-                     away.team_pace, 12, foul_trouble, stat_lines, rng)
-        _accumulate_hustle(home_rot, stat_lines, 12, rng)
-        _accumulate_hustle(away_rot, stat_lines, 12, rng)
+                     away.team_pace, lp["quarter_min"], foul_trouble,
+                     stat_lines, rng, lp)
+        _accumulate_hustle(home_rot, stat_lines, lp["quarter_min"], rng, lp)
+        _accumulate_hustle(away_rot, stat_lines, lp["quarter_min"], rng, lp)
         home_score += h
         away_score += a
         periods.append({"period": f"Q{q}", "home": h, "away": a})
@@ -157,9 +181,9 @@ def simulate_nba_game(context: GameContext,
     ot = 1
     while home_score == away_score:
         h = _quarter(home_rot, home_ortg, away.team_drtg,
-                     home.team_pace, 5, foul_trouble, stat_lines, rng)
+                     home.team_pace, 5, foul_trouble, stat_lines, rng, lp)
         a = _quarter(away_rot, away_ortg, home.team_drtg,
-                     away.team_pace, 5, foul_trouble, stat_lines, rng)
+                     away.team_pace, 5, foul_trouble, stat_lines, rng, lp)
         home_score += h
         away_score += a
         periods.append({"period": f"OT{ot}", "home": h, "away": a})

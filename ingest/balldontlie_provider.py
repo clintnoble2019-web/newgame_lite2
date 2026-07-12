@@ -187,7 +187,14 @@ class BallDontLieProvider(DataProvider):
         self.season = config.BDL_SEASON
 
     def _league(self, sport: Sport) -> str:
-        return "nba" if sport == Sport.NBA else "mlb"
+        # WNBA mirrors the NBA endpoint structure at /wnba/v1/ — every
+        # non-MLB branch below is the shared basketball path, so WNBA
+        # rides the NBA parsing/hydration logic with only this mapping.
+        if sport == Sport.NBA:
+            return "nba"
+        if sport == Sport.WNBA:
+            return "wnba"
+        return "mlb"
 
     def _get(self, sport: Sport, path: str, params: dict = None) -> dict:
         url = f"{BASE}/{self._league(sport)}/v1/{path}"
