@@ -7,7 +7,7 @@ Matches the actual call sites in api/main.py:
     db.init_db()
     db.save_prediction(pred)              # pred: models.SimulationOutput
     db.save_settle(result)                # result: models.GameSettleResult
-    db.get_accuracy_summary(sport=None)   # sport: 'MLB' | 'NBA' | None
+    db.get_accuracy_summary(sport=None)   # sport: 'MLB' | 'NBA' | 'WNBA' | None
     db.get_recent_settles(limit=10)
 
 Plus two additions the scheduler needs (nothing else in main.py touches
@@ -26,6 +26,17 @@ are stored as JSON text columns — SQLite has no native nested type.
 Drop in at: nexgame_lite/db/database.py (nexgame_lite/db/__init__.py
 must exist — empty file is fine, main.py already imports `from db import
 database as db` so the package is presumably already set up).
+
+WNBA MIGRATION (2026-07-13):
+    The original predictions schema had CHECK (sport IN ('MLB', 'NBA'))
+    baked into the table — every WNBA save failed with IntegrityError
+    the moment WNBA went live. SQLite cannot ALTER a CHECK constraint,
+    so init_db now runs an idempotent rebuild migration: if the live
+    table's stored schema still has the two-sport constraint, the table
+    is rebuilt with the WNBA-inclusive one and ALL existing rows are
+    copied over (the public MLB accuracy record survives untouched).
+    Databases already migrated (or created fresh) are left alone, so
+    this is safe to run on every startup.
 """
 
 import sqlite3
@@ -44,6 +55,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 
 DB_PATH = config.DB_PATH
+
+# One place to grow the allowed-sport list from now on. The CREATE
+# TABLE below and the migration both derive from this.
+ALLOWED_SPORTS = ("MLB", "NBA", "WNBA")
+_SPORT_CHECK = "CHECK (sport IN ('MLB', 'NBA', 'WNBA'))"
 
 
 @contextmanager
@@ -69,11 +85,11 @@ def get_conn():
 def init_db() -> None:
     with get_conn() as conn:
         conn.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS predictions (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                 game_id             TEXT UNIQUE NOT NULL,
-                sport               TEXT NOT NULL CHECK (sport IN ('MLB', 'NBA')),
+                sport               TEXT NOT NULL {_SPORT_CHECK},
                 home_team           TEXT NOT NULL,
                 away_team           TEXT NOT NULL,
                 home_win_pct        REAL NOT NULL,
@@ -129,9 +145,97 @@ def init_db() -> None:
         except sqlite3.OperationalError:
             pass   # column already exists
 
+    # WNBA migration runs on its own connection (needs foreign_keys OFF
+    # for the table rebuild — get_conn() forces it ON).
+    _migrate_sport_check()
+
+
+def _migrate_sport_check() -> None:
+    """Rebuild the predictions table if its live schema still carries
+    the old two-sport CHECK constraint. Idempotent: no-ops on already-
+    migrated or freshly created databases.
+
+    SQLite cannot ALTER a CHECK constraint, so this follows the
+    documented rebuild recipe: new table -> copy every row -> drop old
+    -> rename -> recreate indexes, inside one transaction with
+    foreign_keys OFF (settles references predictions(game_id); the
+    rename preserves the reference target name so the FK survives)."""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='table' AND name='predictions'"
+        ).fetchone()
+        if not row or not row[0]:
+            return
+        schema_sql = row[0]
+        if "'WNBA'" in schema_sql:
+            return   # already migrated
+        if "CHECK" not in schema_sql.upper():
+            return   # no constraint to migrate
+
+        conn.execute("PRAGMA foreign_keys=OFF;")
+        conn.execute("BEGIN;")
+
+        # Old table may or may not have pitching_matchup depending on
+        # when it was created — copy exactly the columns both share.
+        old_cols = [r[1] for r in conn.execute(
+            "PRAGMA table_info(predictions);").fetchall()]
+
+        conn.execute(
+            f"""
+            CREATE TABLE predictions_new (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id             TEXT UNIQUE NOT NULL,
+                sport               TEXT NOT NULL {_SPORT_CHECK},
+                home_team           TEXT NOT NULL,
+                away_team           TEXT NOT NULL,
+                home_win_pct        REAL NOT NULL,
+                away_win_pct        REAL NOT NULL,
+                score_low_home      INTEGER NOT NULL,
+                score_med_home      INTEGER NOT NULL,
+                score_high_home     INTEGER NOT NULL,
+                score_low_away      INTEGER NOT NULL,
+                score_med_away      INTEGER NOT NULL,
+                score_high_away     INTEGER NOT NULL,
+                player_projections  TEXT NOT NULL,
+                confidence          TEXT NOT NULL,
+                win_confidence      TEXT NOT NULL,
+                simulations_run     INTEGER NOT NULL,
+                generated_at        TEXT NOT NULL,
+                stored_at           TEXT NOT NULL,
+                pitching_matchup    TEXT NOT NULL DEFAULT '{{}}'
+            );
+            """
+        )
+
+        new_cols = [r[1] for r in conn.execute(
+            "PRAGMA table_info(predictions_new);").fetchall()]
+        shared = [c for c in old_cols if c in new_cols]
+        col_list = ", ".join(shared)
+        conn.execute(
+            f"INSERT INTO predictions_new ({col_list}) "
+            f"SELECT {col_list} FROM predictions;"
+        )
+
+        conn.execute("DROP TABLE predictions;")
+        conn.execute("ALTER TABLE predictions_new RENAME TO predictions;")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_sport "
+                     "ON predictions(sport);")
+        conn.execute("COMMIT;")
+        conn.execute("PRAGMA foreign_keys=ON;")
+    except Exception:
+        try:
+            conn.execute("ROLLBACK;")
+        except sqlite3.OperationalError:
+            pass
+        raise
+    finally:
+        conn.close()
+
 
 def _sport_value(sport) -> str:
-    """Handles both the Sport enum and a plain string ('MLB'/'NBA')."""
+    """Handles both the Sport enum and a plain string ('MLB'/'NBA'/'WNBA')."""
     return sport.value if hasattr(sport, "value") else str(sport)
 
 
