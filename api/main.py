@@ -28,6 +28,17 @@ FIRST-PITCH GUARD (added 2026-07-08):
     of thing a skeptic screenshots. 409 with a clear message; pass
     ?force=true to override during development/testing only. Forced
     predictions should never be settled into the public record.
+
+LAST-OUT GUARD (added 2026-07-12):
+    /api/settle now refuses to settle any game whose final boxscore
+    status is not FINAL. Mirrors the first-pitch guard above — a
+    settle against an in-progress/scheduled/postponed boxscore writes
+    a false result into the public accuracy record (caught during
+    manual testing on the NYY@WSH game, which returned a live 0-0
+    boxscore and still produced a "settled" Win/Loss result client-side).
+    409 with a clear message. No override flag — unlike predictions,
+    there is no legitimate dev reason to force-settle against
+    non-final data, so this guard has no bypass.
 """
 
 import os
@@ -245,6 +256,21 @@ def settle(game_id: str, sport: str = Query(...),
         box = provider.get_final_boxscore(game_id, sp)
     except Exception as e:
         raise HTTPException(502, f"Boxscore error: {e}")
+
+    # LAST-OUT GUARD — mirrors the first-pitch guard on /api/predict.
+    # A settle against a non-final boxscore (in-progress, scheduled,
+    # postponed) writes a false result into the public accuracy
+    # record — disqualifying, so refuse loudly instead of failing
+    # silently. No force override: unlike predictions, there's no
+    # legitimate dev reason to settle against non-final data.
+    box_status = box.get("status")
+    if box_status != GameStatus.FINAL.value:
+        raise HTTPException(
+            409,
+            f"Game is not final (status: {box_status}) — settling now "
+            f"would write an incomplete or in-progress result into the "
+            f"public accuracy record. Wait for the game to finish, "
+            f"then settle again.")
 
     result = settle_game(pred, box)
     db.save_settle(result)
