@@ -23,11 +23,24 @@ ACTIVATION:
        BallDontLie's public docs/examples, not a live test call — mark
        "VERIFY" comments below are the ones most likely to need a tweak.
 
+TIMEZONE FIX (2026-07-08):
+    BallDontLie timestamps are UTC. A 5:05 PM Pacific game is stamped
+    ~00:05Z the NEXT calendar day, so storing the raw UTC date shifted
+    every evening game forward one day — which is how a "tomorrow"
+    prediction got generated for a game already in the 9th inning.
+    All game dates are now converted to LOCAL_TZ (config.LOCAL_TZ,
+    default America/Los_Angeles) before storage/comparison, and date
+    queries fetch a two-day UTC window then filter by LOCAL date.
+
+    Windows note: run `pip install tzdata` once (Windows has no system
+    timezone database; Linux/Railway needs nothing).
+
 Docs: https://docs.balldontlie.io/  (NBA)  ·  https://mlb.balldontlie.io/
 Auth: header "Authorization: <api_key>" — no "Bearer" prefix.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import requests
 
 import config
@@ -39,10 +52,9 @@ from models import (
 
 BASE = "https://api.balldontlie.io"
 
-_STATUS_MAP = {
-    "scheduled": GameStatus.SCHEDULED,
-    "final": GameStatus.FINAL,
-}
+# Local timezone for all game-date logic. Override in config.py with
+# e.g. LOCAL_TZ = "America/Chicago" — defaults to Pacific.
+LOCAL_TZ = ZoneInfo(getattr(config, "LOCAL_TZ", "America/Los_Angeles"))
 
 _INJURY_MAP = {
     "out": InjuryStatus.OUT,
@@ -90,6 +102,64 @@ def _i(val, default=0):
         return default
 
 
+def _parse_local_dt(raw_date: str):
+    """Parse a BallDontLie date field into a LOCAL_TZ-aware datetime.
+
+    Handles both full ISO timestamps ('2026-07-09T00:05:00Z' — MLB) and
+    bare dates ('2026-07-08'). Bare dates carry no time component, so
+    they're taken at face value (assumed already the intended game date).
+    Returns None if unparseable."""
+    if not raw_date:
+        return None
+    try:
+        if "T" in raw_date:
+            dt = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+            if dt.tzinfo is None:          # naive timestamp -> assume UTC
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(LOCAL_TZ)
+        # bare date — no rollover risk, pin to local midnight
+        return datetime.fromisoformat(raw_date[:10]).replace(tzinfo=LOCAL_TZ)
+    except ValueError:
+        return None
+
+
+def _fmt_time(dt: datetime) -> str:
+    """Windows-safe 12-hour clock ('%-I' raises ValueError on Windows
+    strftime — the old code silently swallowed that and left game_time
+    blank on local runs). '%I' then strip the leading zero instead."""
+    return dt.strftime("%I:%M %p").lstrip("0")
+
+
+def _score(g: dict, side: str) -> int:
+    """Score field names differ by BallDontLie sport. CONFIRMED from a
+    real MLB response (2026-07-08): score lives under a nested
+    '{side}_team_data' object as 'runs' — e.g. g['home_team_data']['runs'].
+    NBA uses flat 'home_team_score'/'visitor_team_score' instead.
+    Check the confirmed MLB shape first, then fall back through the
+    other plausible variants for safety."""
+    team_data = g.get(f"{side}_team_data")
+    if isinstance(team_data, dict) and team_data.get("runs") is not None:
+        return _i(team_data.get("runs"))
+
+    candidates = [
+        f"{side}_team_score", f"{side}_score",
+        f"{side}_team_runs", f"{side}_runs",
+    ]
+    if side == "away":
+        candidates += ["visitor_team_score", "visitor_score"]
+    for key in candidates:
+        val = g.get(key)
+        if val is not None:
+            return _i(val)
+    score_obj = g.get("score", {})
+    if isinstance(score_obj, dict):
+        for key in (f"{side}_score", f"{side}_team_score",
+                    "visitor_score" if side == "away" else None):
+            if key and score_obj.get(key) is not None:
+                return _i(score_obj.get(key))
+    return 0
+
+
 class BallDontLieProvider(DataProvider):
     """Production provider — GOAT tier, MLB + NBA. Same DataProvider
     interface as mock/free/mysportsfeeds — engine, settling, and
@@ -111,18 +181,60 @@ class BallDontLieProvider(DataProvider):
 
     # ── interface ────────────────────────────────────────────────────
     def get_games_for_date(self, sport: Sport, date_str: str) -> list[GameContext]:
-        """FREE tier endpoint — schedule + score shell only."""
-        data = self._get(sport, "games", params={"dates[]": date_str})
-        return [self._parse_game_shell(g, sport) for g in data.get("data", [])]
+        """FREE tier endpoint — schedule + score shell only.
+
+        date_str is a LOCAL calendar date ('2026-07-08'). BallDontLie's
+        dates[] filter is keyed on the UTC timestamp, so an evening
+        Pacific game lives under the NEXT UTC date. Query a two-day UTC
+        window (requested date + next day), then filter client-side on
+        each game's LOCAL date. Correct regardless of which convention
+        BDL uses for dates[], since the filter is authoritative."""
+        try:
+            next_day = (datetime.fromisoformat(date_str[:10])
+                        + timedelta(days=1)).strftime("%Y-%m-%d")
+            query_dates = [date_str[:10], next_day]
+        except ValueError:
+            query_dates = [date_str]
+
+        data = self._get(sport, "games", params={"dates[]": query_dates})
+
+        seen, shells = set(), []
+        for g in data.get("data", []):
+            gid = str(g.get("id", ""))
+            if gid in seen:
+                continue
+            seen.add(gid)
+            shell = self._parse_game_shell(g, sport)
+            if shell.game_date == date_str[:10]:
+                shells.append(shell)
+        return shells
 
     def get_game_context(self, game_id: str, sport: Sport) -> GameContext:
-        """GOAT tier: lineups + injuries + season stats hydration."""
+        """GOAT tier: lineups + injuries + season stats hydration.
+
+        Lineup data is only posted once a game begins (BallDontLie
+        data-availability limitation, not a bug) — for any game
+        predicted ahead of first pitch, the live lineup comes back
+        empty. Rather than fall straight to fully synthetic "Team
+        Batter N" placeholders, first try the team's real active
+        roster (real names) as a better-tier fallback. Individual
+        stats still hydrate through the normal recent->career->team_avg
+        chain — only the NAME identity improves here, not fabricated
+        stats."""
         data = self._get(sport, f"games/{game_id}")
         shell = self._parse_game_shell(data.get("data", data), sport)
 
         lineup_data = self._get(sport, "lineups",
                                 params={"game_ids[]": game_id})
         self._apply_lineup(shell, lineup_data.get("data", []), sport)
+
+        # Live lineup wasn't posted -> use real roster names instead of
+        # fully synthetic placeholders (MLB only for now).
+        if sport == Sport.MLB:
+            for team in (shell.home_team, shell.away_team):
+                has_batters = any(not p.is_pitcher for p in team.roster)
+                if not has_batters:
+                    self._apply_active_roster_fallback(team, sport)
 
         self._hydrate_team_stats(shell.home_team, sport)
         self._hydrate_team_stats(shell.away_team, sport)
@@ -131,27 +243,78 @@ class BallDontLieProvider(DataProvider):
 
         return shell
 
+    def _apply_active_roster_fallback(self, team: TeamData, sport: Sport):
+        """Real-roster fallback tier for when the live lineup isn't
+        posted yet. Pulls the team's active players (real names) and
+        assigns the first 9 non-pitchers to lineup spots 1-9 —
+        alphabetical/API order, not a real batting order, but real
+        identities. Stats still hydrate normally afterward via
+        _hydrate_player_stats (recent -> career -> team_avg chain)."""
+        try:
+            data = self._get(sport, "players/active",
+                             params={"team_ids[]": team.team_id})
+        except requests.RequestException:
+            return   # falls through to the fully synthetic placeholder
+                     # fallback already built into engine/mlb_sim.py
+
+        players = [p for p in data.get("data", [])
+                  if str(p.get("team", {}).get("id", "")) == team.team_id]
+        if not players:
+            return
+
+        spot = 1
+        for p in players:
+            position = (p.get("position") or "").upper()
+            if "PITCHER" in position or position in ("P", "SP", "RP"):
+                continue   # bullpen/rotation avg handles pitchers separately
+            if spot > 9:
+                break
+            pid = str(p.get("id", ""))
+            name = (f"{p.get('first_name','')} "
+                   f"{p.get('last_name','')}").strip() or pid
+            team.roster.append(PlayerStats(
+                player_id=pid, name=name, sport=sport, lineup_spot=spot))
+            spot += 1
+
     def get_live_scores(self, sport: Sport) -> list[dict]:
         """FREE tier for schedule/score; GOAT unlocks true live box
         score granularity, but the base games endpoint updates scores
-        in near-real-time already, which covers the ticker's needs."""
-        date_compact = datetime.now().strftime("%Y-%m-%d")
-        data = self._get(sport, "games", params={"dates[]": date_compact})
-        out = []
+        in near-real-time already, which covers the ticker's needs.
+
+        'Today' means the LOCAL calendar date — not the server's clock.
+        On Railway the server runs UTC, so the old datetime.now() call
+        rolled the ticker to tomorrow's slate every evening Pacific.
+        Same two-day-window + local-date-filter approach as
+        get_games_for_date."""
+        today_local = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+        next_day = (datetime.now(LOCAL_TZ)
+                    + timedelta(days=1)).strftime("%Y-%m-%d")
+        data = self._get(sport, "games",
+                         params={"dates[]": [today_local, next_day]})
+
+        out, seen = [], set()
         for g in data.get("data", []):
+            gid = str(g.get("id", ""))
+            if gid in seen:
+                continue
+            seen.add(gid)
+
+            local_dt = _parse_local_dt(g.get("date", ""))
+            game_local_date = (local_dt.strftime("%Y-%m-%d")
+                               if local_dt else str(g.get("date", ""))[:10])
+            if game_local_date != today_local:
+                continue   # tomorrow's slate leaked in via the window
+
             home = g.get("home_team", {})
             away = g.get("away_team") or g.get("visitor_team", {})
             status = _game_status(g.get("status", ""))
-            away_score = g.get("away_team_score")
-            if away_score is None:
-                away_score = g.get("visitor_team_score")
             out.append({
-                "game_id": str(g.get("id", "")),
+                "game_id": gid,
                 "status": status.value,
                 "home": home.get("abbreviation", "HOM"),
                 "away": away.get("abbreviation", "AWY"),
-                "home_score": _i(g.get("home_team_score")),
-                "away_score": _i(away_score),
+                "home_score": _score(g, "home"),
+                "away_score": _score(g, "away"),
                 "period": (g.get("status_detail") or g.get("status", "")
                           if status == GameStatus.LIVE
                           else status.value.upper()),
@@ -164,33 +327,82 @@ class BallDontLieProvider(DataProvider):
         stats = self._get(sport, "stats", params={"game_ids[]": game_id})
         return self._parse_boxscore(game, stats.get("data", []), sport)
 
+    def get_boxscore(self, game_id: str, sport: Sport) -> dict:
+        """CONFIRMED against BallDontLie's published MLB OpenAPI spec
+        (openapi/mlb.yml) on 2026-07-11: the game object itself carries
+        home_team_data.inning_scores / away_team_data.inning_scores
+        (array of per-inning runs) — no separate call needed. NBA
+        carries the same idea as flat home_q1..q4/visitor_q1..q4 fields
+        (there is no away_q* — BallDontLie uses 'visitor' for NBA
+        scoring fields specifically, same legacy naming as visitor_team
+        elsewhere in this file).
+
+        Also works for LIVE games, not just FINAL — the stats endpoint
+        returns whatever's accrued so far."""
+        game = self._get(sport, f"games/{game_id}").get("data", {})
+        stats = self._get(sport, "stats", params={"game_ids[]": game_id})
+        box = self._parse_boxscore(game, stats.get("data", []), sport)
+
+        line_score = []
+        if sport == Sport.MLB:
+            home_innings = (game.get("home_team_data") or {}).get("inning_scores") or []
+            away_innings = (game.get("away_team_data") or {}).get("inning_scores") or []
+            for i in range(max(len(home_innings), len(away_innings))):
+                line_score.append({
+                    "label": str(i + 1),
+                    "home": home_innings[i] if i < len(home_innings) else 0,
+                    "away": away_innings[i] if i < len(away_innings) else 0,
+                })
+        else:
+            for i in range(1, 5):
+                h, a = game.get(f"home_q{i}"), game.get(f"visitor_q{i}")
+                if h is None and a is None:
+                    continue
+                line_score.append({"label": f"Q{i}", "home": h or 0, "away": a or 0})
+            for i in range(1, 4):
+                h, a = game.get(f"home_ot{i}"), game.get(f"visitor_ot{i}")
+                if h is None and a is None:
+                    continue
+                line_score.append({"label": f"OT{i}", "home": h or 0, "away": a or 0})
+
+        box["line_score"] = line_score
+        inning_num = game.get("period")
+        box["period"] = (f"Inning {inning_num}" if sport == Sport.MLB and inning_num
+                         else (game.get("status_detail") or game.get("status")))
+        return box
+
     # ── parsers ──────────────────────────────────────────────────────
     def _parse_game_shell(self, g: dict, sport: Sport) -> GameContext:
         home_j = g.get("home_team", {})
         # BallDontLie uses 'visitor_team' for NBA (legacy naming) but
-        # MLB — added later — may use 'away_team' instead. Check both.
+        # MLB — added later — uses 'away_team' instead (confirmed).
         away_j = g.get("away_team") or g.get("visitor_team", {})
 
         home = TeamData(
             team_id=str(home_j.get("id", "")),
-            name=home_j.get("display_name") or home_j.get("full_name")
-                 or home_j.get("name", "Home"),
+            # CONFIRMED: top-level 'home_team_name' is a reliable flat
+            # string, present even when the nested object's naming
+            # varies by sport. Prefer it, fall back to nested object.
+            name=g.get("home_team_name") or home_j.get("display_name")
+                 or home_j.get("full_name") or home_j.get("name", "Home"),
             abbrev=home_j.get("abbreviation", "HOM"), sport=sport)
         away = TeamData(
             team_id=str(away_j.get("id", "")),
-            name=away_j.get("display_name") or away_j.get("full_name")
-                 or away_j.get("name", "Away"),
+            name=g.get("away_team_name") or away_j.get("display_name")
+                 or away_j.get("full_name") or away_j.get("name", "Away"),
             abbrev=away_j.get("abbreviation", "AWY"), sport=sport)
 
+        # TIMEZONE FIX: game_date/game_time are LOCAL now. The raw BDL
+        # timestamp is UTC — a 5:05 PM Pacific start is ~00:05Z the next
+        # day, so the old raw_date[:10] slice stamped every evening game
+        # with tomorrow's date.
         raw_date = g.get("date", "")
-        game_date, game_time = raw_date[:10], ""
-        if "T" in raw_date:
-            try:
-                dt = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
-                game_date = dt.strftime("%Y-%m-%d")
-                game_time = dt.strftime("%-I:%M %p")
-            except ValueError:
-                pass
+        local_dt = _parse_local_dt(raw_date)
+        if local_dt is not None:
+            game_date = local_dt.strftime("%Y-%m-%d")
+            game_time = _fmt_time(local_dt) if "T" in raw_date else ""
+        else:
+            game_date, game_time = raw_date[:10], ""
 
         return GameContext(
             game_id=str(g.get("id", "")), sport=sport,
@@ -198,10 +410,8 @@ class BallDontLieProvider(DataProvider):
             home_team=home, away_team=away,
             game_date=game_date, game_time=game_time,
             venue=g.get("venue", "") or "",
-            home_score_live=_i(g.get("home_team_score")),
-            away_score_live=_i(g.get("away_team_score")
-                              if g.get("away_team_score") is not None
-                              else g.get("visitor_team_score")),
+            home_score_live=_score(g, "home"),
+            away_score_live=_score(g, "away"),
         )
 
     def _apply_lineup(self, context: GameContext, lineup_rows: list,
@@ -262,18 +472,31 @@ class BallDontLieProvider(DataProvider):
 
     def _hydrate_team_stats(self, team: TeamData, sport: Sport):
         """Team-level fallback constants (rotation avg, bullpen avg,
-        team OBP/SLG for MLB; ORtg/DRtg/pace for NBA)."""
+        team OBP/SLG for MLB; ORtg/DRtg/pace for NBA).
+
+        CONFIRMED (diagnostic run against real API): 'season_stats' is
+        actually the PLAYER-level endpoint — 'teams/season_stats' is
+        the real team-level one, returning one row per team with both
+        batting_obp and pitching_era populated. The team_ids[] filter
+        doesn't appear to narrow results server-side (still returns
+        all 30 teams), so match by team_id client-side instead."""
         if sport == Sport.MLB:
             try:
-                data = self._get(sport, "season_stats",
-                                 params={"season": self.season,
-                                        "team_ids[]": team.team_id})
+                data = self._get(sport, "teams/season_stats",
+                                 params={"season": self.season})
             except requests.RequestException:
                 return
             rows = data.get("data", [])
             if not rows:
                 return
-            s = rows[0]
+            s = None
+            for row in rows:
+                row_team = row.get("team", {})
+                if str(row_team.get("id", "")) == team.team_id:
+                    s = row
+                    break
+            if s is None:
+                return   # this team not found in the response — keep defaults
             team.rotation_avg_era = round(_f(s.get("pitching_era"),
                                              config.LEAGUE_AVG_ERA), 2)
             team.rotation_avg_whip = round(_f(s.get("pitching_whip"),
@@ -381,18 +604,8 @@ class BallDontLieProvider(DataProvider):
 
     def _parse_boxscore(self, game: dict, stat_rows: list,
                         sport: Sport) -> dict:
-        home_score = _i(game.get("home_team_score"))
-        away_score = _i(game.get("away_team_score")
-                        if game.get("away_team_score") is not None
-                        else game.get("visitor_team_score"))
-
-        # Team abbrevs so the frontend can split the box score by team
-        home_j = game.get("home_team", {})
-        away_j = game.get("away_team") or game.get("visitor_team", {})
-        home_id = str(home_j.get("id", ""))
-        away_id = str(away_j.get("id", ""))
-        home_abbrev = home_j.get("abbreviation", "HOM")
-        away_abbrev = away_j.get("abbreviation", "AWY")
+        home_score = _score(game, "home")
+        away_score = _score(game, "away")
 
         player_stats = {}
         for row in stat_rows:
@@ -400,43 +613,31 @@ class BallDontLieProvider(DataProvider):
             pid = str(player.get("id", ""))
             if not pid:
                 continue
-            # Tag each player with their team so the frontend/modal can
-            # group by team instead of one mixed list. Stat rows carry a
-            # team ref either on the row or nested on the player.
-            team_ref = row.get("team") or player.get("team") or {}
-            row_team_id = str(team_ref.get("id", ""))
-            if row_team_id == home_id:
-                team_tag = home_abbrev
-            elif row_team_id == away_id:
-                team_tag = away_abbrev
-            else:
-                team_tag = team_ref.get("abbreviation", "")
+            name = (f"{player.get('first_name','')} "
+                   f"{player.get('last_name','')}").strip()
             out = {}
             if sport == Sport.MLB:
-                if "batting_h" in row or "batting_rbi" in row:
-                    out["hits"] = _i(row.get("batting_h"))
-                    out["rbis"] = _i(row.get("batting_rbi"))
-                if "pitching_k" in row:
-                    out["strikeouts"] = _i(row.get("pitching_k"))
+                # CONFIRMED against BallDontLie's published MLB OpenAPI
+                # spec (openapi/mlb.yml) on 2026-07-11: stats rows are
+                # flat, not nested under 'batting'/'pitching' — every
+                # row carries both sets of fields, null where they
+                # don't apply. The old field names here (batting_h,
+                # batting_rbi, pitching_k) don't exist in the real
+                # response at all, so this was silently matching zero
+                # players on every settle for this provider — a much
+                # bigger bug than the modal that surfaced it.
+                if row.get("hits") is not None:
+                    out["hits"] = _i(row.get("hits"))
+                    out["rbis"] = _i(row.get("rbi"))
+                if row.get("ip") is not None:
+                    out["strikeouts"] = _i(row.get("p_k"))
             else:
                 out["points"] = _i(row.get("pts"))
                 out["assists"] = _i(row.get("ast"))
                 out["rebounds"] = _i(row.get("reb"))
             if out:
-                out["_team"] = team_tag
-                # settle/pipeline.py's name-fallback matching reads
-                # actual_stats["_name"] — this provider never set it,
-                # so that fallback silently never fired. Fixed.
-                out["_name"] = (f"{player.get('first_name', '')} "
-                                f"{player.get('last_name', '')}").strip()
+                out["_name"] = name   # underscore prefix: metadata, not a stat
                 player_stats[pid] = out
 
-        # STATUS FIELD (added 2026-07-12): the last-out guard in
-        # /api/settle checks box["status"] — without this key every
-        # settle 409s, and before the guard existed the missing status
-        # let an in-progress 0-0 boxscore settle as if final (the
-        # NYY@WSH incident). Normalized via _game_status, same as
-        # everywhere else.
         return {"home_score": home_score, "away_score": away_score,
-                "status": _game_status(game.get("status", "")).value,
                 "player_stats": player_stats}

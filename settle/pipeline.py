@@ -91,10 +91,7 @@ def settle_game(prediction: SimulationOutput,
         if not proj:
             continue
         for metric, actual_val in actual_stats.items():
-            # Skip metadata keys (_name, _team) — underscore prefix
-            # marks non-metric fields attached by the provider for
-            # name-fallback matching and team-split display.
-            if metric.startswith("_"):
+            if metric == "_name":
                 continue
             projected_val = proj.get(metric)
             if projected_val is None or projected_val <= 0:

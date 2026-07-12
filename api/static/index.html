@@ -239,11 +239,6 @@ let liveTimer = null;
 // game_id -> {home, away} names, populated by loadGames(), used to
 // label settled results with real team names as a fallback.
 const gameNames = {};
-// game_id -> stored prediction / settle payloads from the games-list
-// response — lets the box score modal show "what we called" next to
-// the live/final numbers without another API round trip.
-const gamePreds = {};
-const gameSettles = {};
 
 function showPage(name) {
   document.getElementById('page-games').style.display =
@@ -343,8 +338,6 @@ async function loadGames() {
     if (!games.length) { el.innerHTML = '<span class="loading">No games scheduled.</span>'; return; }
     el.innerHTML = games.map(g => {
       gameNames[g.game_id] = { home: g.home, away: g.away };
-      gamePreds[g.game_id] = g.prediction || null;
-      gameSettles[g.game_id] = g.settle || null;
       // Backend refuses predictions after first pitch (409). Mirror
       // that rule in the UI: live/final/postponed games get a locked
       // button instead of inviting an error. Dev override lives at
@@ -599,38 +592,6 @@ function renderBoxscore(gameId, box) {
       </table>`;
   }
 
-  // ── model prediction vs reality (if one was stored pre-game) ──
-  const pred = gamePreds[gameId];
-  const settle = gameSettles[gameId];
-  let predHtml = '';
-  if (pred) {
-    const favored = pred.home_win_pct >= 50 ? homeName : awayName;
-    const favPct = Math.max(pred.home_win_pct, pred.away_win_pct);
-    const gradeHtml = settle ? `
-      <div style="margin-top:6px">
-        <span class="${settle.win_loss_correct ? 'ok' : 'bad'}">
-          ${settle.win_loss_correct ? '✅' : '❌'} Win/Loss</span> ·
-        <span class="${settle.score_range_correct ? 'ok' : 'bad'}">
-          ${settle.score_range_correct ? '✅' : '❌'} Score Range</span> ·
-        Player acc ${settle.player_accuracy_pct}%
-      </div>` : '';
-    predHtml = `
-      <div class="section-title" style="margin-top:14px">Model Prediction (pre-game)</div>
-      <div class="settled">
-        Favored <strong>${favored}</strong> at ${favPct}% ·
-        Predicted score: ${awayName} ${pred.score_med_away}
-        (${pred.score_low_away}–${pred.score_high_away}) –
-        ${homeName} ${pred.score_med_home}
-        (${pred.score_low_home}–${pred.score_high_home})
-        ${gradeHtml}
-      </div>`;
-  } else {
-    predHtml = `
-      <div class="meta" style="margin-top:14px">No pre-game prediction was
-      run for this game — predictions can only be generated before first
-      pitch, so they'll appear here for games predicted in advance.</div>`;
-  }
-
   const players = Object.entries(box.player_stats || {});
   let metricCols = [];
   if (players.length) {
@@ -656,7 +617,6 @@ function renderBoxscore(gameId, box) {
     <div class="modal-score">${awayName} ${box.away_score} – ${homeName} ${box.home_score}</div>
     ${box.period ? `<div class="modal-period">${box.period}</div>` : ''}
     ${lineScoreHtml}
-    ${predHtml}
     ${playerTableHtml}`;
 }
 
