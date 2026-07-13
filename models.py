@@ -71,6 +71,19 @@ class PlayerStats:
     minutes_proj: float = 0.0
     is_starter_nba: bool = False
 
+    # CS2 — per-map rate stats (VERIFIED live 2026-07-13 via BDL's
+    # player_match_stats endpoint). kills/deaths/assists are counting
+    # stats (summed across a simulated series' maps); adr/rating/
+    # headshot_pct/kast are per-map RATE stats (averaged, never
+    # summed — ADR doesn't accumulate the way kills do).
+    cs2_kills_avg: float = 0.0
+    cs2_deaths_avg: float = 0.0
+    cs2_assists_avg: float = 0.0
+    cs2_adr_avg: float = 0.0
+    cs2_rating_avg: float = 0.0
+    cs2_headshot_pct_avg: float = 0.0
+    cs2_maps_sample: int = 0
+
 
 # ── Team ──────────────────────────────────────────────────────────────
 @dataclass
