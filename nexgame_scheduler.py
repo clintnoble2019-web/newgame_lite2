@@ -51,7 +51,7 @@ logger = logging.getLogger("nexgame.scheduler")
 logging.basicConfig(level=logging.INFO)
 
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")
-SPORTS = (Sport.MLB, Sport.NBA, Sport.WNBA)
+SPORTS = (Sport.MLB, Sport.NBA, Sport.WNBA, Sport.CS2)
 
 LOCK_CHECK_INTERVAL_MIN = 10     # how often to scan for games to predict
 SETTLE_CHECK_INTERVAL_MIN = 15   # how often to scan for games to settle

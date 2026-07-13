@@ -58,8 +58,8 @@ DB_PATH = config.DB_PATH
 
 # One place to grow the allowed-sport list from now on. The CREATE
 # TABLE below and the migration both derive from this.
-ALLOWED_SPORTS = ("MLB", "NBA", "WNBA")
-_SPORT_CHECK = "CHECK (sport IN ('MLB', 'NBA', 'WNBA'))"
+ALLOWED_SPORTS = ("MLB", "NBA", "WNBA", "CS2")
+_SPORT_CHECK = "CHECK (sport IN ('MLB', 'NBA', 'WNBA', 'CS2'))"
 
 
 @contextmanager
@@ -169,8 +169,8 @@ def _migrate_sport_check() -> None:
         if not row or not row[0]:
             return
         schema_sql = row[0]
-        if "'WNBA'" in schema_sql:
-            return   # already migrated
+        if "'CS2'" in schema_sql:
+            return   # already fully migrated (includes the latest sport)
         if "CHECK" not in schema_sql.upper():
             return   # no constraint to migrate
 

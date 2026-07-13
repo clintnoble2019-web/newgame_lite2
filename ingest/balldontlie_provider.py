@@ -91,12 +91,14 @@ def _game_status(raw: str) -> GameStatus:
     yet started. WNBA uses ESPN abstract states: 'pre' / 'in' / 'post'
     (VERIFIED live 2026-07-13 — every completed WNBA game is 'post',
     never 'final'; without this mapping completed games classified as
-    LIVE and the settle guard blocked WNBA settling entirely).
-    Normalize all of these defensively."""
+    LIVE and the settle guard blocked WNBA settling entirely). CS2
+    uses its own vocabulary (VERIFIED live 2026-07-13): 'upcoming' /
+    'finished' / 'defwin' (forfeit — has a real, settleable score) /
+    'canceled'. Normalize all of these defensively."""
     r = (raw or "").strip().lower().replace("status_", "")
-    if r in ("final", "closed", "completed", "post"):
+    if r in ("final", "closed", "completed", "post", "finished", "defwin"):
         return GameStatus.FINAL
-    if r in ("", "scheduled", "pre", "preview"):
+    if r in ("", "scheduled", "pre", "preview", "upcoming"):
         return GameStatus.SCHEDULED
     if "t" in r and r[:4].isdigit():   # looks like an ISO timestamp
         return GameStatus.SCHEDULED
@@ -191,13 +193,16 @@ class BallDontLieProvider(DataProvider):
         self.season = config.BDL_SEASON
 
     def _league(self, sport: Sport) -> str:
-        # WNBA mirrors the NBA endpoint structure at /wnba/v1/ — every
-        # non-MLB branch below is the shared basketball path, so WNBA
-        # rides the NBA parsing/hydration logic with only this mapping.
+        # WNBA and CS2 mirror the basketball/base endpoint conventions
+        # at their own /v1/ roots — see per-sport branches below for
+        # where the data SHAPES genuinely diverge (CS2 especially:
+        # matches/team1/team2, not games/home/away).
         if sport == Sport.NBA:
             return "nba"
         if sport == Sport.WNBA:
             return "wnba"
+        if sport == Sport.CS2:
+            return "cs"
         return "mlb"
 
     def _get(self, sport: Sport, path: str, params: dict = None) -> dict:
@@ -209,9 +214,11 @@ class BallDontLieProvider(DataProvider):
 
     # ── interface ────────────────────────────────────────────────────
     def get_games_for_date(self, sport: Sport, date_str: str) -> list[GameContext]:
-        """FREE tier endpoint — schedule + score shell only.
+        """FREE tier endpoint — schedule + score shell only."""
+        if sport == Sport.CS2:
+            return self._cs2_matches_for_date(date_str)
 
-        date_str is a LOCAL calendar date ('2026-07-08'). BallDontLie's
+        """date_str is a LOCAL calendar date ('2026-07-08'). BallDontLie's
         dates[] filter is keyed on the UTC timestamp, so an evening
         Pacific game lives under the NEXT UTC date. Query a two-day UTC
         window (requested date + next day), then filter client-side on
@@ -237,10 +244,81 @@ class BallDontLieProvider(DataProvider):
                 shells.append(shell)
         return shells
 
-    def get_game_context(self, game_id: str, sport: Sport) -> GameContext:
-        """GOAT tier: lineups + injuries + season stats hydration.
+    def _cs2_matches_for_date(self, date_str: str) -> list[GameContext]:
+        """CS2 SCHEDULE — DIFFERENT PATTERN FROM EVERY OTHER SPORT.
 
-        Lineup data is only posted once a game begins (BallDontLie
+        VERIFIED live 2026-07-13: the generic /cs/v1/matches list
+        (no filters) ALWAYS returns the same stale 2021 dataset —
+        status/sort/date-range params are silently ignored. The ONLY
+        confirmed way to reach real current matches is filtering by
+        tournament_ids[] for tournaments whose status is literally
+        "current" (date-range-overlap alone isn't enough — a
+        cancelled tournament can still overlap today's date and will
+        correctly return zero matches).
+
+        So: pull tournaments, keep only status=="current" ones, pull
+        each one's matches, keep matches whose start_time falls on
+        date_str. Slower than a single query (N+1 calls) but it's the
+        only verified-working path — CS2's tournament count active at
+        once is small (single digits), so this stays cheap in practice.
+        """
+        try:
+            t_data = self._get(Sport.CS2, "tournaments",
+                               params={"per_page": 100})
+        except requests.RequestException:
+            return []
+        current_ids = [t.get("id") for t in t_data.get("data", [])
+                       if t.get("status") == "current"]
+
+        shells = []
+        for tid in current_ids:
+            try:
+                m_data = self._get(Sport.CS2, "matches",
+                                   params={"tournament_ids[]": tid,
+                                          "per_page": 100})
+            except requests.RequestException:
+                continue
+            for m in m_data.get("data", []):
+                shell = self._parse_cs2_match_shell(m)
+                if shell and shell.game_date == date_str[:10]:
+                    shells.append(shell)
+        return shells
+
+    def _parse_cs2_match_shell(self, m: dict) -> "GameContext | None":
+        """Build a GameContext shell from one CS2 match record.
+        team1/team2 can be None on not-yet-assigned bracket slots
+        (VERIFIED live) — skip those, nothing to predict yet."""
+        t1, t2 = m.get("team1"), m.get("team2")
+        if not t1 or not t2:
+            return None
+        local_dt = _parse_local_dt(m.get("start_time", ""))
+        if local_dt is None:
+            return None
+        home = TeamData(team_id=str(t1.get("id", "")),
+                        name=t1.get("name", "Team 1"),
+                        abbrev=(t1.get("short_name") or t1.get("name", ""))[:4],
+                        sport=Sport.CS2)
+        away = TeamData(team_id=str(t2.get("id", "")),
+                        name=t2.get("name", "Team 2"),
+                        abbrev=(t2.get("short_name") or t2.get("name", ""))[:4],
+                        sport=Sport.CS2)
+        tourney = m.get("tournament", {}) or {}
+        return GameContext(
+            game_id=str(m.get("id", "")), sport=Sport.CS2,
+            status=_game_status(m.get("status", "")),
+            home_team=home, away_team=away,
+            game_date=local_dt.strftime("%Y-%m-%d"),
+            game_time=_fmt_time(local_dt),
+            venue=tourney.get("name", "") or "",
+            best_of=_i(m.get("best_of"), 3),
+        )
+
+    def get_game_context(self, game_id: str, sport: Sport) -> GameContext:
+        """GOAT tier: lineups + injuries + season stats hydration."""
+        if sport == Sport.CS2:
+            return self._cs2_game_context(game_id)
+
+        """Lineup data is only posted once a game begins (BallDontLie
         data-availability limitation, not a bug) — for any game
         predicted ahead of first pitch, the live lineup comes back
         empty. Rather than fall straight to fully synthetic "Team
@@ -399,7 +477,108 @@ class BallDontLieProvider(DataProvider):
                 p.usage_rate = round(p.ppg / p.minutes_proj, 3)
             p.data_source = "recent"
 
-    def _apply_active_roster_fallback(self, team: TeamData, sport: Sport):
+    def _cs2_game_context(self, match_id: str) -> GameContext:
+        """CS2 game context: fetch the match, then hydrate both teams'
+        round-win% from their OTHER finished maps in the SAME
+        tournament (verified-available scope — see
+        _hydrate_cs2_team_rating). No lineup/roster concept for CS2 in
+        this scope (moneyline + map spread/total only, no player
+        props)."""
+        data = self._get(Sport.CS2, f"matches/{match_id}")
+        m = data.get("data", data)
+        shell = self._parse_cs2_match_shell(m)
+        if shell is None:
+            raise ValueError(
+                f"CS2 match {match_id} has no teams assigned yet "
+                f"(bracket slot not yet determined)")
+
+        tourney_id = (m.get("tournament") or {}).get("id")
+        for team, opponent_id in (
+                (shell.home_team, shell.away_team.team_id),
+                (shell.away_team, shell.home_team.team_id)):
+            try:
+                self._hydrate_cs2_team_rating(team, tourney_id, match_id)
+            except requests.RequestException:
+                pass   # keep league-avg default (LOCKED fail-safe pattern)
+        return shell
+
+    def _hydrate_cs2_team_rating(self, team: TeamData, tournament_id,
+                                 exclude_match_id: str):
+        """Round win% derived from a team's OWN finished maps within
+        the SAME tournament as the match being predicted.
+
+        SCOPE NOTE (honest, not a bug): CS2's generic /matches list is
+        a stale dataset that ignores every filter (VERIFIED live
+        2026-07-13), and no endpoint for "this team's matches across
+        all tournaments" was found working. Same-tournament form is
+        the verified-available signal — legitimate on its own (recent
+        LAN/league form), but a team entering a new tournament with no
+        prior maps there falls back to CS2_LEAGUE_AVG_ROUND_WIN_PCT.
+        Broader cross-tournament history is a real upgrade path once
+        a working team-history endpoint is confirmed.
+
+        Round win% = rounds won / rounds played across every completed
+        map (VERIFIED shape: match_maps rows carry team1_score/
+        team2_score as ROUND counts, e.g. 13-1, not map counts)."""
+        if not tournament_id:
+            return
+        m_data = self._get(Sport.CS2, "matches",
+                           params={"tournament_ids[]": tournament_id,
+                                  "per_page": 100})
+        team_match_ids = []
+        for m in m_data.get("data", []):
+            if str(m.get("id", "")) == str(exclude_match_id):
+                continue   # never leak the match being predicted
+            if _game_status(m.get("status", "")) != GameStatus.FINAL:
+                continue
+            t1, t2 = m.get("team1") or {}, m.get("team2") or {}
+            if (str(t1.get("id", "")) == team.team_id
+                    or str(t2.get("id", "")) == team.team_id):
+                team_match_ids.append(str(m.get("id", "")))
+
+        if not team_match_ids:
+            return   # no in-tournament history yet — keep league avg
+
+        rounds_won = rounds_played = maps_seen = 0
+        for mid in team_match_ids[:15]:   # cap calls; recent form matters most
+            try:
+                maps_data = self._get(Sport.CS2, "match_maps",
+                                      params={"match_ids[]": mid})
+            except requests.RequestException:
+                continue
+            for mp in maps_data.get("data", []):
+                winner = mp.get("winner") or {}
+                t1s, t2s = _i(mp.get("team1_score")), _i(mp.get("team2_score"))
+                if t1s == 0 and t2s == 0:
+                    continue   # unplayed/no data
+                # Determine which side of THIS map was our team — the
+                # winner block carries a team id we can match directly
+                # regardless of team1/team2 order.
+                is_winner = str(winner.get("id", "")) == team.team_id
+                # team1_score/team2_score aren't labeled by team id in
+                # the map row itself, but the winner's round total is
+                # always the higher of the two scores (CS2 has no
+                # draws) — so the team's own round count is max(t1s,t2s)
+                # if they won, min(t1s,t2s) if they lost.
+                own_rounds = max(t1s, t2s) if is_winner else min(t1s, t2s)
+                rounds_won += own_rounds
+                rounds_played += t1s + t2s
+                maps_seen += 1
+
+        if rounds_played == 0:
+            return
+        raw_pct = rounds_won / rounds_played
+        # Blend toward league average when the sample is thin, same
+        # shrinkage pattern as everywhere else in this codebase that
+        # handles small samples.
+        if maps_seen < config.CS2_MIN_MAPS_SAMPLE:
+            weight = maps_seen / config.CS2_MIN_MAPS_SAMPLE
+            raw_pct = (raw_pct * weight
+                      + config.CS2_LEAGUE_AVG_ROUND_WIN_PCT * (1 - weight))
+        team.cs2_round_win_pct = round(raw_pct, 3)
+        team.cs2_maps_sample = maps_seen
+
+
         """Real-roster fallback tier for when the live lineup isn't
         posted (MLB pre-game) or the sport has no lineups endpoint at
         all (WNBA). Pulls the team's active players (real names) so
@@ -646,6 +825,8 @@ class BallDontLieProvider(DataProvider):
         """GOAT tier — Game Player Stats -> settling pipeline input.
         Returns _parse_boxscore output, which includes "status" — the
         last-out guard in /api/settle depends on that key."""
+        if sport == Sport.CS2:
+            return self._cs2_boxscore(game_id)
         game = self._get(sport, f"games/{game_id}").get("data", {})
         stat_rows = self._fetch_game_player_stats(game_id, sport)
         return self._parse_boxscore(game, stat_rows, sport)
@@ -662,6 +843,11 @@ class BallDontLieProvider(DataProvider):
 
         Also works for LIVE games, not just FINAL — the stats endpoint
         returns whatever's accrued so far."""
+        if sport == Sport.CS2:
+            box = self._cs2_boxscore(game_id)
+            box["line_score"] = box.pop("_cs2_map_line_score", [])
+            box["period"] = box.pop("_cs2_period_label", "")
+            return box
         game = self._get(sport, f"games/{game_id}").get("data", {})
         stat_rows = self._fetch_game_player_stats(game_id, sport)
         box = self._parse_boxscore(game, stat_rows, sport)
@@ -693,6 +879,48 @@ class BallDontLieProvider(DataProvider):
         box["period"] = (f"Inning {inning_num}" if sport == Sport.MLB and inning_num
                          else (game.get("status_detail") or game.get("status")))
         return box
+
+    def _cs2_boxscore(self, match_id: str) -> dict:
+        """CS2 settle/display data — MAPS won per team (the settleable
+        unit), not rounds. VERIFIED shape: match_maps rows carry
+        team1_score/team2_score as ROUND counts per map (e.g. 13-1)
+        and a winner block with a team id — map WINS are derived by
+        counting how many maps each team's id appears as winner on,
+        not by comparing home/away labels (CS2 has no home/away, only
+        team1/team2, and match_maps doesn't echo the match's team1/
+        team2 order directly)."""
+        m_data = self._get(Sport.CS2, f"matches/{match_id}")
+        m = m_data.get("data", m_data)
+        t1, t2 = m.get("team1") or {}, m.get("team2") or {}
+        t1_id, t2_id = str(t1.get("id", "")), str(t2.get("id", ""))
+
+        maps_data = self._get(Sport.CS2, "match_maps",
+                              params={"match_ids[]": match_id})
+        maps = maps_data.get("data", [])
+
+        home_maps = away_maps = 0
+        line_score = []
+        for mp in sorted(maps, key=lambda x: x.get("map_number", 0)):
+            winner_id = str((mp.get("winner") or {}).get("id", ""))
+            if winner_id == t1_id:
+                home_maps += 1
+            elif winner_id == t2_id:
+                away_maps += 1
+            line_score.append({
+                "label": mp.get("map_name", f"Map {mp.get('map_number')}"),
+                "home": _i(mp.get("team1_score")),
+                "away": _i(mp.get("team2_score")),
+            })
+
+        return {
+            "home_score": home_maps, "away_score": away_maps,
+            "status": _game_status(m.get("status", "")).value,
+            "player_stats": {},   # no player props in this scope
+            "_cs2_map_line_score": line_score,
+            "_cs2_period_label": m.get("status", ""),
+        }
+
+
 
     # ── parsers ──────────────────────────────────────────────────────
     def _parse_game_shell(self, g: dict, sport: Sport) -> GameContext:

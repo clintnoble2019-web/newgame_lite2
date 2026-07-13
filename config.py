@@ -37,12 +37,6 @@ TRIM_PCT = 0.30                 # narrowed 2026-07-10: 2.5% (95% CI) read
                                  # tight and genuinely predictive.
 TRIM_COUNT = int(SIMULATION_RUNS * TRIM_PCT)
 
-# ── Confidence signal thresholds (MARGIN width, redefined 2026-07-11) ─
-# Now measured against the trimmed width of (home - away) across all
-# iterations, not each team's individual score spread.
-CONFIDENCE_BANDS_MLB = {"high": 3, "medium": 5}
-CONFIDENCE_BANDS_NBA = {"high": 8, "medium": 14}
-
 # ── Player data sufficiency (LOCKED) ─────────────────────────────────
 MLB_PITCHER_MIN_GAMES = 5       # pitchers need 5 starts before rolling avg
 MLB_BATTER_MIN_GAMES = 0        # no minimum — any recent data wins
@@ -94,12 +88,27 @@ LEAGUE_AVG_PPG_WNBA = 81.0      # points per team per game — baseline
                                 # for deriving team ORtg/DRtg from real
                                 # points scored/allowed (WNBA has no
                                 # advanced-stats endpoint)
-LEAGUE_AVG_PPG_WNBA = 81.0      # league-average points per team per game
 OT_LENGTH_FACTOR = 5 / 48       # OT possessions = pace * this
+
+# ── CS2 engine tuning constants ───────────────────────────────────────
+# CS2 has no advanced-stats/season-averages endpoint (same limitation
+# as WNBA) — team strength is derived from round win% across the
+# team's own finished maps within the SAME tournament as the match
+# being predicted (verified-available scope; see provider). Odds
+# markets are map-level (Map Handicap, Total Maps O/U), not round-
+# level, so the sim simulates map wins via log5, not individual rounds.
+CS2_LEAGUE_AVG_ROUND_WIN_PCT = 0.500   # used when a team has no
+                                        # finished maps yet in-tournament
+CS2_MIN_MAPS_SAMPLE = 3                # below this, blend toward league
+                                        # avg rather than trust the raw
+                                        # in-tournament sample
 
 # ── Confidence signal thresholds (score range width) ─────────────────
 CONFIDENCE_BANDS_MLB = {"high": 4, "medium": 7}    # runs
 CONFIDENCE_BANDS_NBA = {"high": 14, "medium": 24}  # points
+# CS2 home/away score = MAPS won (e.g. 2-0, 2-1 in a Bo3), a tiny
+# integer range — width is measured in maps, not rounds.
+CONFIDENCE_BANDS_CS2 = {"high": 1, "medium": 2}
 
 # ── Database ─────────────────────────────────────────────────────────
 # SQLite for Lite (zero setup, same SQL you learn in Module 3).

@@ -17,6 +17,7 @@ class Sport(Enum):
     MLB = "MLB"
     NBA = "NBA"
     WNBA = "WNBA"
+    CS2 = "CS2"
 
 
 class GameStatus(Enum):
@@ -97,6 +98,14 @@ class TeamData:
     team_drtg: float = 0.0
     team_pace: float = 0.0
 
+    # CS2 — round win% is the core strength signal (no advanced-stats
+    # or player-props endpoint exists on the CS2 API; see provider).
+    # Derived from the team's own finished maps within the SAME
+    # tournament as the match being predicted (verified-available
+    # scope; cross-tournament history is a future upgrade).
+    cs2_round_win_pct: float = 0.500
+    cs2_maps_sample: int = 0        # maps the rating was derived from
+
 
 # ── Game ──────────────────────────────────────────────────────────────
 @dataclass
@@ -120,6 +129,9 @@ class GameContext:
     # NBA context
     back_to_back_home: bool = False
     back_to_back_away: bool = False
+    # CS2 context — series length (1/3/5). home_team/away_team map
+    # onto CS2's team1/team2 (CS2 has no home/away convention).
+    best_of: int = 3
 
 
 # ── Simulation output ─────────────────────────────────────────────────

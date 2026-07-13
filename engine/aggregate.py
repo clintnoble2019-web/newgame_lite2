@@ -16,6 +16,7 @@ import config
 from models import GameContext, Sport, IterationResult, SimulationOutput
 from engine.mlb_sim import simulate_mlb_game
 from engine.nba_sim import simulate_nba_game
+from engine.cs2_sim import simulate_cs2_match
 
 
 def _trimmed(scores: list[int]) -> tuple[int, int, int]:
@@ -32,8 +33,12 @@ def _margin_confidence(range_width: int, sport: Sport) -> str:
     trimmed score range is. Says nothing about who wins; a heavily
     favored team can still have a wide margin range (could be a close
     win or a blowout)."""
-    bands = (config.CONFIDENCE_BANDS_MLB if sport == Sport.MLB
-             else config.CONFIDENCE_BANDS_NBA)
+    if sport == Sport.MLB:
+        bands = config.CONFIDENCE_BANDS_MLB
+    elif sport == Sport.CS2:
+        bands = config.CONFIDENCE_BANDS_CS2
+    else:
+        bands = config.CONFIDENCE_BANDS_NBA   # NBA + WNBA share bands
     if range_width <= bands["high"]:
         return "high"
     if range_width <= bands["medium"]:
@@ -66,8 +71,12 @@ def run_simulation(context: GameContext,
     """
     runs = runs or config.SIMULATION_RUNS
     rng = random.Random(seed)
-    simulate = (simulate_mlb_game if context.sport == Sport.MLB
-                else simulate_nba_game)
+    if context.sport == Sport.MLB:
+        simulate = simulate_mlb_game
+    elif context.sport == Sport.CS2:
+        simulate = simulate_cs2_match
+    else:
+        simulate = simulate_nba_game   # NBA + WNBA share this engine
 
     results: list[IterationResult] = []
     for i in range(runs):
