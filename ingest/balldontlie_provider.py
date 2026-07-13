@@ -578,7 +578,7 @@ class BallDontLieProvider(DataProvider):
         team.cs2_round_win_pct = round(raw_pct, 3)
         team.cs2_maps_sample = maps_seen
 
-
+    def _apply_active_roster_fallback(self, team: TeamData, sport: Sport):
         """Real-roster fallback tier for when the live lineup isn't
         posted (MLB pre-game) or the sport has no lineups endpoint at
         all (WNBA). Pulls the team's active players (real names) so
@@ -758,9 +758,11 @@ class BallDontLieProvider(DataProvider):
     def get_live_scores(self, sport: Sport) -> list[dict]:
         """FREE tier for schedule/score; GOAT unlocks true live box
         score granularity, but the base games endpoint updates scores
-        in near-real-time already, which covers the ticker's needs.
+        in near-real-time already, which covers the ticker's needs."""
+        if sport == Sport.CS2:
+            return self._cs2_live_scores()
 
-        'Today' means the LOCAL calendar date — not the server's clock.
+        """'Today' means the LOCAL calendar date — not the server's clock.
         On Railway the server runs UTC, so the old datetime.now() call
         rolled the ticker to tomorrow's slate every evening Pacific.
         Same two-day-window + local-date-filter approach as
@@ -798,6 +800,45 @@ class BallDontLieProvider(DataProvider):
                           if status == GameStatus.LIVE
                           else status.value.upper()),
             })
+        return out
+
+    def _cs2_live_scores(self) -> list[dict]:
+        """CS2 live ticker — same tournament-scoping constraint as
+        _cs2_matches_for_date (the generic /matches list is stale and
+        ignores filters). Pulls today's matches through current
+        tournaments and reports live map score (maps won so far)."""
+        today_local = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+        try:
+            t_data = self._get(Sport.CS2, "tournaments",
+                               params={"per_page": 100})
+        except requests.RequestException:
+            return []
+        current_ids = [t.get("id") for t in t_data.get("data", [])
+                       if t.get("status") == "current"]
+
+        out = []
+        for tid in current_ids:
+            try:
+                m_data = self._get(Sport.CS2, "matches",
+                                   params={"tournament_ids[]": tid,
+                                          "per_page": 100})
+            except requests.RequestException:
+                continue
+            for m in m_data.get("data", []):
+                local_dt = _parse_local_dt(m.get("start_time", ""))
+                if local_dt is None or local_dt.strftime("%Y-%m-%d") != today_local:
+                    continue
+                t1, t2 = m.get("team1") or {}, m.get("team2") or {}
+                status = _game_status(m.get("status", ""))
+                out.append({
+                    "game_id": str(m.get("id", "")),
+                    "status": status.value,
+                    "home": (t1.get("short_name") or t1.get("name", "TM1"))[:4],
+                    "away": (t2.get("short_name") or t2.get("name", "TM2"))[:4],
+                    "home_score": _i(m.get("team1_score")),
+                    "away_score": _i(m.get("team2_score")),
+                    "period": status.value.upper(),
+                })
         return out
 
     def _fetch_game_player_stats(self, game_id: str,
