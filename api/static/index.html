@@ -446,6 +446,14 @@ function renderPrediction(gameId, p, settled) {
     { key: 'points',     label: 'PTS' },
     { key: 'assists',    label: 'AST' },
     { key: 'rebounds',   label: 'REB' },
+    // CS2 (added when player props were reinstated) — 'assists' above
+    // is shared with NBA/WNBA safely, since a single game only ever
+    // produces one sport's key family.
+    { key: 'kills',        label: 'Kills' },
+    { key: 'deaths',       label: 'Deaths' },
+    { key: 'adr',          label: 'ADR' },
+    { key: 'rating',       label: 'Rating' },
+    { key: 'headshot_pct', label: 'HS%', pct: true },
   ];
   const projs = Object.entries(p.player_projections || {});
   const present = new Set();
@@ -541,7 +549,9 @@ function renderSettled(gameId, s) {
          actual ${sideName(s.actual_winner, s, gameId)})</span><br>
       <span class="${s.score_range_correct ? 'ok' : 'bad'}">
         ${s.score_range_correct ? '✅' : '❌'} Score Range</span><br>
-      Player totals within ±20% band: <strong>${s.player_accuracy_pct}%</strong>
+      ${(s.player_results && s.player_results.length)
+        ? `Player totals within ±20% band: <strong>${s.player_accuracy_pct}%</strong>`
+        : `Player totals: <strong>N/A</strong> (no player props for this sport)`}
     </div>`;
 }
 
