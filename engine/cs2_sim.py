@@ -42,7 +42,8 @@ def _log5(round_win_a: float, round_win_b: float) -> float:
     return (a - a * b) / denom
 
 
-def _sample_map_stats(roster: list, rng: random.Random) -> dict:
+def _sample_map_stats(roster: list, team_abbrev: str,
+                      rng: random.Random) -> dict:
     """One map's worth of per-player stats for one team. Counting
     stats sampled from a normal distribution around the hydrated
     per-map average (floored at 0 — a player can't have negative
@@ -65,7 +66,8 @@ def _sample_map_stats(roster: list, rng: random.Random) -> dict:
         hs_pct = min(100.0, max(0.0, rng.gauss(
             p.cs2_headshot_pct_avg, p.cs2_headshot_pct_avg * 0.2)))
         out[p.player_id] = {
-            "name": p.name, "kills": kills, "deaths": deaths,
+            "name": p.name, "_team": team_abbrev,
+            "kills": kills, "deaths": deaths,
             "assists": assists, "adr": adr, "rating": rating,
             "headshot_pct": hs_pct,
         }
@@ -102,10 +104,13 @@ def simulate_cs2_match(context: GameContext,
             "winner": "home" if home_wins_map else "away",
         })
 
-        for roster in (context.home_team.roster, context.away_team.roster):
-            for pid, stats in _sample_map_stats(roster, rng).items():
+        for team, roster in ((context.home_team, context.home_team.roster),
+                            (context.away_team, context.away_team.roster)):
+            for pid, stats in _sample_map_stats(
+                    roster, team.abbrev, rng).items():
                 entry = player_match_totals.setdefault(pid, {
-                    "name": stats["name"], "kills": 0.0, "deaths": 0.0,
+                    "name": stats["name"], "_team": stats["_team"],
+                    "kills": 0.0, "deaths": 0.0,
                     "assists": 0.0, "adr": 0.0, "rating": 0.0,
                     "headshot_pct": 0.0,
                 })

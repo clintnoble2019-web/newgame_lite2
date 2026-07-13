@@ -14,7 +14,6 @@ One iteration = one full game simulated INNING BY INNING (LOCKED).
 
 import random
 import config
-import engine.mlb_strength as strength
 from models import GameContext, PlayerStats, IterationResult, InjuryStatus
 
 
@@ -60,15 +59,7 @@ def _bullpen_pitcher(team) -> PlayerStats:
 def _lineup(team, rng: random.Random) -> list[PlayerStats]:
     """Ordered 1-9 lineup with injury weights applied per iteration.
     A player who rolls 'doesn't play' is replaced by a team-average bat
-    — the roster object itself is never modified (LOCKED).
-
-    FALLBACK (LOCKED chain, recent -> team_avg): if the data provider
-    hasn't posted a real lineup yet (e.g. BallDontLie only returns
-    lineups once a game begins), team.roster may have fewer than 9
-    batters — or zero. Pad up to exactly 9 with team-average bats so
-    the engine always has a full lineup and never indexes out of
-    range. This is the fallback chain working as designed, not a
-    special case."""
+    — the roster object itself is never modified (LOCKED)."""
     batters = sorted(
         [p for p in team.roster if not p.is_pitcher and p.lineup_spot],
         key=lambda p: p.lineup_spot)
@@ -87,41 +78,19 @@ def _lineup(team, rng: random.Random) -> list[PlayerStats]:
                 lineup_spot=b.lineup_spot,
                 data_source="team_avg")
             out.append((filler, 1.0))
-
-    # Pad to exactly 9 spots if the lineup wasn't fully posted (or at
-    # all) — team-average fallback bats fill the gap.
-    while len(out) < 9:
-        spot = len(out) + 1
-        filler = PlayerStats(
-            player_id=f"{team.team_id}_avg{spot}",
-            name=f"{team.abbrev} Batter {spot}",
-            sport=team.sport,
-            obp=team.team_obp or config.LEAGUE_AVG_OBP,
-            slg=team.team_slg or 0.410,
-            lineup_spot=spot,
-            data_source="team_avg")
-        out.append((filler, 1.0))
-
     return out
 
 
 def _plate_appearance(batter: PlayerStats, capacity: float,
                       pitcher: PlayerStats, park_factor: float,
-                      team_multiplier: float,
                       rng: random.Random) -> str:
     """One PA. Returns: 'out' | 'walk' | 'single' | 'double' | 'triple' | 'hr'.
     Hit probability = batter OBP scaled by pitcher WHIP vs league,
-    reduced by injury capacity, THEN scaled by the batting team's
-    four-factor strength multiplier (HIT × oppPITCH × oppDEF × SCORE —
-    ported from Samurai Picks). This is what actually separates two
-    teams that would otherwise both be running on similar fallback
-    averages — real team_obp/team_slg/rotation_era differences now
-    compound into the per-PA math instead of being ignored."""
+    reduced by injury capacity."""
     obp = (batter.obp or config.LEAGUE_AVG_OBP) * capacity
     whip = pitcher.whip or config.LEAGUE_AVG_WHIP
     pitcher_factor = whip / config.LEAGUE_AVG_WHIP
-    p_reach = min(0.480, max(0.180,
-                             obp * (pitcher_factor ** 0.7) * team_multiplier))
+    p_reach = min(0.480, max(0.180, obp * (pitcher_factor ** 0.7)))
 
     if rng.random() >= p_reach:
         return "out"
@@ -188,9 +157,10 @@ def _advance(bases: list, outcome: str) -> int:
 
 
 def _half_inning(lineup: list, spot: int, pitcher: PlayerStats,
-                 pitch_count: int, park_factor: float, team_multiplier: float,
+                 pitch_count: int, park_factor: float,
                  stat_lines: dict, runner_on_2nd: bool,
-                 rng: random.Random) -> tuple[int, int, int]:
+                 rng: random.Random, batting_team_abbrev: str = "",
+                 pitching_team_abbrev: str = "") -> tuple[int, int, int]:
     """Simulate one half-inning.
     Returns (runs, next_lineup_spot, updated_pitch_count)."""
     outs = 0
@@ -200,11 +170,13 @@ def _half_inning(lineup: list, spot: int, pitcher: PlayerStats,
     while outs < 3:
         batter, capacity = lineup[spot % 9]
         outcome = _plate_appearance(batter, capacity, pitcher,
-                                    park_factor, team_multiplier, rng)
+                                    park_factor, rng)
         pitch_count += int(rng.gauss(config.PITCHES_PER_PA, 1.2))
 
         sl = stat_lines.setdefault(
-            batter.player_id, {"name": batter.name, "hits": 0, "rbis": 0})
+            batter.player_id, {"name": batter.name,
+                               "_team": batting_team_abbrev,
+                               "hits": 0, "rbis": 0})
         if outcome == "out":
             outs += 1
             # pitcher K credit chance scaled by K/9
@@ -212,7 +184,8 @@ def _half_inning(lineup: list, spot: int, pitcher: PlayerStats,
             if rng.random() < k_rate * 3:
                 psl = stat_lines.setdefault(
                     pitcher.player_id,
-                    {"name": pitcher.name, "strikeouts": 0})
+                    {"name": pitcher.name, "_team": pitching_team_abbrev,
+                     "strikeouts": 0})
                 psl["strikeouts"] = psl.get("strikeouts", 0) + 1
         else:
             scored = _advance(bases, outcome)
@@ -238,21 +211,6 @@ def simulate_mlb_game(context: GameContext,
     home_lineup = _lineup(home, rng)
     away_lineup = _lineup(away, rng)
 
-    # ── Four-factor team strength (ported from Samurai Picks) ────────
-    # Computed once per game, not per PA — a team-level lever, not a
-    # per-batter one. home_strength answers "how much does the HOME
-    # team's batting quality × the AWAY starter's weakness intersect";
-    # away_strength is the mirror. This is what separates two teams
-    # that would otherwise both look like fallback-average clones.
-    home_strength = strength.team_strength(
-        home, away_sp.era or config.LEAGUE_AVG_ERA,
-        away_sp.whip or config.LEAGUE_AVG_WHIP)
-    away_strength = strength.team_strength(
-        away, home_sp.era or config.LEAGUE_AVG_ERA,
-        home_sp.whip or config.LEAGUE_AVG_WHIP)
-    home_multiplier = home_strength["multiplier"]
-    away_multiplier = away_strength["multiplier"]
-
     home_score = away_score = 0
     home_spot = away_spot = 0
     home_pitches = away_pitches = 0
@@ -270,16 +228,18 @@ def simulate_mlb_game(context: GameContext,
         # Top: away bats vs home pitching
         runs, away_spot, home_pitches = _half_inning(
             away_lineup, away_spot, h_pitcher, home_pitches,
-            context.park_factor, away_multiplier, stat_lines,
-            runner_on_2nd=extra, rng=rng)
+            context.park_factor, stat_lines, runner_on_2nd=extra, rng=rng,
+            batting_team_abbrev=away.abbrev,
+            pitching_team_abbrev=home.abbrev)
         away_score += runs
 
         # Bottom: home bats (walk-off aware: skip if ahead in 9th+)
         if not (inning >= 9 and home_score > away_score):
             runs, home_spot, away_pitches = _half_inning(
                 home_lineup, home_spot, a_pitcher, away_pitches,
-                context.park_factor, home_multiplier, stat_lines,
-                runner_on_2nd=extra, rng=rng)
+                context.park_factor, stat_lines, runner_on_2nd=extra, rng=rng,
+                batting_team_abbrev=home.abbrev,
+                pitching_team_abbrev=away.abbrev)
             home_score += runs
 
         periods.append({"inning": inning,

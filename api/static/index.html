@@ -465,7 +465,7 @@ function renderPrediction(gameId, p, settled) {
   }
   const fmt = (val, col) => val == null ? '' : (col.pct ? `${val}%` : val);
   const tableRows = projs.slice(0, 10).map(([pid, pr]) => `
-      <tr><td>${pr.name}</td>${cols.map(c =>
+      <tr><td>${pr.name}${pr.team ? ` <span style="color:var(--dim);font-size:.8em">(${pr.team})</span>` : ''}</td>${cols.map(c =>
         `<td>${fmt(pr[c.key], c)}</td>`).join('')}</tr>`).join('');
 
   el.innerHTML = `

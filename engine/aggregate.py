@@ -103,11 +103,20 @@ def run_simulation(context: GameContext,
         for pid, stats in r.player_stats.items():
             entry = accum.setdefault(
                 pid, {"name": stats.get("name", pid),
+                      # Team tag (added for CS2 2026-07-13): nicknames
+                      # aren't unique across teams — two different real
+                      # players can both go by e.g. "Shark" — so the
+                      # display needs a way to disambiguate. Captured
+                      # once like name, never summed.
+                      "team": stats.get("_team", ""),
                       "sums": {}, "count": 0,
                       "hit_games": 0, "rbi_games": 0})
             entry["count"] += 1
             for metric, val in stats.items():
-                if metric == "name":
+                # "name" and any "_"-prefixed metadata (e.g. "_team")
+                # are captured above, not summed — summing a string
+                # into "sums" would crash.
+                if metric == "name" or metric.startswith("_"):
                     continue
                 entry["sums"][metric] = entry["sums"].get(metric, 0) + val
             if stats.get("hits", 0) >= 1:
@@ -119,7 +128,7 @@ def run_simulation(context: GameContext,
     for pid, entry in accum.items():
         if entry["count"] < runs * 0.05:      # ignore rare replacement bats
             continue
-        proj = {"name": entry["name"]}
+        proj = {"name": entry["name"], "team": entry["team"]}
         for metric, total in entry["sums"].items():
             proj[metric] = round(total / runs, 1)
         # conversion pcts only for batters (they carry a 'hits' metric);

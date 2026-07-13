@@ -88,7 +88,8 @@ def _sample_possession(ppp: float, rng: random.Random) -> int:
 
 def _quarter(off_rotation: list, ortg: float, opp_drtg: float,
              pace: float, minutes: float, foul_trouble: set,
-             stat_lines: dict, rng: random.Random, lp: dict) -> int:
+             stat_lines: dict, rng: random.Random, lp: dict,
+             team_abbrev: str = "") -> int:
     """One team's offensive output for one period."""
     possessions = max(8, int(rng.gauss(
         (pace or lp["avg_pace"])
@@ -117,7 +118,7 @@ def _quarter(off_rotation: list, ortg: float, opp_drtg: float,
                 if roll <= cum:
                     sl = stat_lines.setdefault(
                         p.player_id,
-                        {"name": p.name, "points": 0,
+                        {"name": p.name, "_team": team_abbrev, "points": 0,
                          "assists": 0, "rebounds": 0})
                     sl["points"] += scored
                     break
@@ -125,14 +126,16 @@ def _quarter(off_rotation: list, ortg: float, opp_drtg: float,
 
 
 def _accumulate_hustle(rotation: list, stat_lines: dict,
-                       minutes: float, rng: random.Random, lp: dict):
+                       minutes: float, rng: random.Random, lp: dict,
+                       team_abbrev: str = ""):
     """Assists + rebounds per period, scaled from per-game averages
     over the correct regulation length (48 NBA / 40 WNBA)."""
     frac = minutes / lp["regulation_min"]
     for p, cap in rotation:
         sl = stat_lines.setdefault(
             p.player_id,
-            {"name": p.name, "points": 0, "assists": 0, "rebounds": 0})
+            {"name": p.name, "_team": team_abbrev, "points": 0,
+             "assists": 0, "rebounds": 0})
         sl["assists"] += max(0, int(rng.gauss((p.apg or 2.0) * frac * cap, 0.7)))
         sl["rebounds"] += max(0, int(rng.gauss((p.rpg or 3.5) * frac * cap, 0.9)))
 
@@ -162,12 +165,14 @@ def simulate_nba_game(context: GameContext,
     for q in range(1, 5):
         h = _quarter(home_rot, home_ortg, away.team_drtg,
                      home.team_pace, lp["quarter_min"], foul_trouble,
-                     stat_lines, rng, lp)
+                     stat_lines, rng, lp, home.abbrev)
         a = _quarter(away_rot, away_ortg, home.team_drtg,
                      away.team_pace, lp["quarter_min"], foul_trouble,
-                     stat_lines, rng, lp)
-        _accumulate_hustle(home_rot, stat_lines, lp["quarter_min"], rng, lp)
-        _accumulate_hustle(away_rot, stat_lines, lp["quarter_min"], rng, lp)
+                     stat_lines, rng, lp, away.abbrev)
+        _accumulate_hustle(home_rot, stat_lines, lp["quarter_min"], rng,
+                           lp, home.abbrev)
+        _accumulate_hustle(away_rot, stat_lines, lp["quarter_min"], rng,
+                           lp, away.abbrev)
         home_score += h
         away_score += a
         periods.append({"period": f"Q{q}", "home": h, "away": a})
@@ -181,9 +186,11 @@ def simulate_nba_game(context: GameContext,
     ot = 1
     while home_score == away_score:
         h = _quarter(home_rot, home_ortg, away.team_drtg,
-                     home.team_pace, 5, foul_trouble, stat_lines, rng, lp)
+                     home.team_pace, 5, foul_trouble, stat_lines, rng,
+                     lp, home.abbrev)
         a = _quarter(away_rot, away_ortg, home.team_drtg,
-                     away.team_pace, 5, foul_trouble, stat_lines, rng, lp)
+                     away.team_pace, 5, foul_trouble, stat_lines, rng,
+                     lp, away.abbrev)
         home_score += h
         away_score += a
         periods.append({"period": f"OT{ot}", "home": h, "away": a})
