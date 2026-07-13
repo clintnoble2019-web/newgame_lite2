@@ -479,11 +479,9 @@ class BallDontLieProvider(DataProvider):
 
     def _cs2_game_context(self, match_id: str) -> GameContext:
         """CS2 game context: fetch the match, then hydrate both teams'
-        round-win% from their OTHER finished maps in the SAME
-        tournament (verified-available scope — see
-        _hydrate_cs2_team_rating). No lineup/roster concept for CS2 in
-        this scope (moneyline + map spread/total only, no player
-        props)."""
+        round-win% AND their players' per-map prop averages from the
+        SAME finished-match history within the current tournament (one
+        combined pass — see _hydrate_cs2_team_and_players)."""
         data = self._get(Sport.CS2, f"matches/{match_id}")
         m = data.get("data", data)
         shell = self._parse_cs2_match_shell(m)
@@ -493,33 +491,38 @@ class BallDontLieProvider(DataProvider):
                 f"(bracket slot not yet determined)")
 
         tourney_id = (m.get("tournament") or {}).get("id")
-        for team, opponent_id in (
-                (shell.home_team, shell.away_team.team_id),
-                (shell.away_team, shell.home_team.team_id)):
+        for team in (shell.home_team, shell.away_team):
             try:
-                self._hydrate_cs2_team_rating(team, tourney_id, match_id)
+                self._hydrate_cs2_team_and_players(
+                    team, tourney_id, match_id)
             except requests.RequestException:
-                pass   # keep league-avg default (LOCKED fail-safe pattern)
+                pass   # keep league-avg defaults (LOCKED fail-safe pattern)
         return shell
 
-    def _hydrate_cs2_team_rating(self, team: TeamData, tournament_id,
-                                 exclude_match_id: str):
-        """Round win% derived from a team's OWN finished maps within
-        the SAME tournament as the match being predicted.
+    def _hydrate_cs2_team_and_players(self, team: TeamData,
+                                      tournament_id, exclude_match_id: str):
+        """Team round-win% AND player prop averages, derived together
+        from ONE pass over the team's recent finished matches in the
+        SAME tournament — combined specifically to avoid doubling the
+        API-call count (adding player_match_stats as a separate full
+        pass risked re-hitting the Run Prediction timeout fixed
+        2026-07-13). Capped at 4 matches (down from the team-only
+        version's 6) since each match now costs 2 calls instead of 1.
 
-        SCOPE NOTE (honest, not a bug): CS2's generic /matches list is
-        a stale dataset that ignores every filter (VERIFIED live
-        2026-07-13), and no endpoint for "this team's matches across
-        all tournaments" was found working. Same-tournament form is
-        the verified-available signal — legitimate on its own (recent
-        LAN/league form), but a team entering a new tournament with no
-        prior maps there falls back to CS2_LEAGUE_AVG_ROUND_WIN_PCT.
-        Broader cross-tournament history is a real upgrade path once
-        a working team-history endpoint is confirmed.
+        SCOPE NOTE (honest, not a bug): same-tournament-only, for the
+        same reason as before — CS2's generic /matches list ignores
+        every filter (VERIFIED live), so cross-tournament history
+        isn't reachable yet.
 
-        Round win% = rounds won / rounds played across every completed
-        map (VERIFIED shape: match_maps rows carry team1_score/
-        team2_score as ROUND counts, e.g. 13-1, not map counts)."""
+        Round win% = rounds won / rounds played across completed maps
+        (match_maps team1_score/team2_score = ROUND counts).
+        Player props = per-map rate, derived by dividing each match's
+        player_match_stats TOTALS by that match's map count (VERIFIED
+        live: player_match_stats returns one row per player with
+        match-total kills/deaths/adr/rating/etc, not per-map) —
+        counting stats (kills/deaths/assists) are summed then divided
+        by maps; rate stats (adr/rating/headshot_pct) are averaged
+        directly since they don't accumulate the way kills do."""
         if not tournament_id:
             return
         m_data = self._get(Sport.CS2, "matches",
@@ -540,43 +543,90 @@ class BallDontLieProvider(DataProvider):
             return   # no in-tournament history yet — keep league avg
 
         rounds_won = rounds_played = maps_seen = 0
-        for mid in team_match_ids[:15]:   # cap calls; recent form matters most
+        # player_id -> accumulator dict
+        player_totals: dict = {}
+
+        for mid in team_match_ids[:4]:
             try:
                 maps_data = self._get(Sport.CS2, "match_maps",
                                       params={"match_ids[]": mid})
             except requests.RequestException:
                 continue
+            match_maps_played = 0
             for mp in maps_data.get("data", []):
                 winner = mp.get("winner") or {}
                 t1s, t2s = _i(mp.get("team1_score")), _i(mp.get("team2_score"))
                 if t1s == 0 and t2s == 0:
                     continue   # unplayed/no data
-                # Determine which side of THIS map was our team — the
-                # winner block carries a team id we can match directly
-                # regardless of team1/team2 order.
                 is_winner = str(winner.get("id", "")) == team.team_id
-                # team1_score/team2_score aren't labeled by team id in
-                # the map row itself, but the winner's round total is
-                # always the higher of the two scores (CS2 has no
-                # draws) — so the team's own round count is max(t1s,t2s)
-                # if they won, min(t1s,t2s) if they lost.
+                # team round count is the higher score if they won the
+                # map, the lower score if they lost it (CS2 has no
+                # draws) — winner isn't labeled team1/team2 directly.
                 own_rounds = max(t1s, t2s) if is_winner else min(t1s, t2s)
                 rounds_won += own_rounds
                 rounds_played += t1s + t2s
                 maps_seen += 1
+                match_maps_played += 1
 
-        if rounds_played == 0:
-            return
-        raw_pct = rounds_won / rounds_played
-        # Blend toward league average when the sample is thin, same
-        # shrinkage pattern as everywhere else in this codebase that
-        # handles small samples.
-        if maps_seen < config.CS2_MIN_MAPS_SAMPLE:
-            weight = maps_seen / config.CS2_MIN_MAPS_SAMPLE
-            raw_pct = (raw_pct * weight
-                      + config.CS2_LEAGUE_AVG_ROUND_WIN_PCT * (1 - weight))
-        team.cs2_round_win_pct = round(raw_pct, 3)
-        team.cs2_maps_sample = maps_seen
+            if match_maps_played == 0:
+                continue
+
+            try:
+                pstats_data = self._get(Sport.CS2, "player_match_stats",
+                                        params={"match_id": mid})
+            except requests.RequestException:
+                continue
+            for row in pstats_data.get("data", []):
+                if str(row.get("team_id", "")) != team.team_id:
+                    continue   # only this team's players from this match
+                player = row.get("player") or {}
+                pid = str(player.get("id", ""))
+                if not pid:
+                    continue
+                acc = player_totals.setdefault(pid, {
+                    "name": (player.get("nickname")
+                            or player.get("full_name") or pid),
+                    "kills": 0.0, "deaths": 0.0, "assists": 0.0,
+                    "adr_sum": 0.0, "rating_sum": 0.0, "hs_sum": 0.0,
+                    "matches": 0,
+                })
+                # Counting stats: per-map rate = match total / maps
+                # played in THIS match (not summed raw across matches).
+                acc["kills"] += _f(row.get("kills")) / match_maps_played
+                acc["deaths"] += _f(row.get("deaths")) / match_maps_played
+                acc["assists"] += _f(row.get("assists")) / match_maps_played
+                # Rate stats: already per-match rates, just average
+                # across matches directly (don't divide by maps again).
+                acc["adr_sum"] += _f(row.get("adr"))
+                acc["rating_sum"] += _f(row.get("rating"))
+                acc["hs_sum"] += _f(row.get("headshot_percentage"))
+                acc["matches"] += 1
+
+        # ── Team round-win% (unchanged logic, same shrinkage) ────────
+        if rounds_played > 0:
+            raw_pct = rounds_won / rounds_played
+            if maps_seen < config.CS2_MIN_MAPS_SAMPLE:
+                weight = maps_seen / config.CS2_MIN_MAPS_SAMPLE
+                raw_pct = (raw_pct * weight
+                          + config.CS2_LEAGUE_AVG_ROUND_WIN_PCT * (1 - weight))
+            team.cs2_round_win_pct = round(raw_pct, 3)
+            team.cs2_maps_sample = maps_seen
+
+        # ── Player prop averages ─────────────────────────────────────
+        for pid, acc in player_totals.items():
+            n = acc["matches"]
+            if n == 0:
+                continue
+            team.roster.append(PlayerStats(
+                player_id=pid, name=acc["name"], sport=Sport.CS2,
+                cs2_kills_avg=round(acc["kills"] / n, 2),
+                cs2_deaths_avg=round(acc["deaths"] / n, 2),
+                cs2_assists_avg=round(acc["assists"] / n, 2),
+                cs2_adr_avg=round(acc["adr_sum"] / n, 1),
+                cs2_rating_avg=round(acc["rating_sum"] / n, 2),
+                cs2_headshot_pct_avg=round(acc["hs_sum"] / n, 1),
+                cs2_maps_sample=maps_seen,
+            ))
 
     def _apply_active_roster_fallback(self, team: TeamData, sport: Sport):
         """Real-roster fallback tier for when the live lineup isn't
@@ -953,10 +1003,42 @@ class BallDontLieProvider(DataProvider):
                 "away": _i(mp.get("team2_score")),
             })
 
+        # Player props (added when player totals were reinstated,
+        # 2026-07-13): player_match_stats(match_id) returns exactly
+        # the unit the sim projects — kills/deaths/assists as MATCH
+        # totals, adr/rating/headshot_pct as match-level rates already
+        # averaged across whatever maps were played. No transform
+        # needed; this is the same shape used to build projections.
+        player_stats = {}
+        try:
+            pstats_data = self._get(Sport.CS2, "player_match_stats",
+                                    params={"match_id": match_id})
+            for row in pstats_data.get("data", []):
+                player = row.get("player") or {}
+                pid = str(player.get("id", ""))
+                if not pid:
+                    continue
+                row_team_id = str(row.get("team_id", ""))
+                team_tag = ("home" if row_team_id == t1_id
+                           else "away" if row_team_id == t2_id else "")
+                player_stats[pid] = {
+                    "kills": _f(row.get("kills")),
+                    "deaths": _f(row.get("deaths")),
+                    "assists": _f(row.get("assists")),
+                    "adr": _f(row.get("adr")),
+                    "rating": _f(row.get("rating")),
+                    "headshot_pct": _f(row.get("headshot_percentage")),
+                    "_name": (player.get("nickname")
+                             or player.get("full_name") or pid),
+                    "_team": team_tag,
+                }
+        except requests.RequestException:
+            pass   # settle still proceeds on maps/score; props stay empty
+
         return {
             "home_score": home_maps, "away_score": away_maps,
             "status": _game_status(m.get("status", "")).value,
-            "player_stats": {},   # no player props in this scope
+            "player_stats": player_stats,
             "_cs2_map_line_score": line_score,
             "_cs2_period_label": m.get("status", ""),
         }
