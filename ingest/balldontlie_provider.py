@@ -221,21 +221,36 @@ def _match_kalshi_to_shell(kalshi_game: dict, shells: list):
     the Kalshi side dicts correctly assigned to match the shell's
     actual home/away (Kalshi's own side order isn't guaranteed to
     match BDL's home/away convention). Returns (None, None, None) if
-    no shell's both teams match this Kalshi game's both sides."""
+    no shell's both teams match this Kalshi game's both sides.
+
+    TWO matching strategies per side, tried in order (VERIFIED live
+    2026-07-14): name-based fuzzy match first (handles the normal
+    case, e.g. Kalshi's truncated "New York M" vs BDL's "New York
+    Mets"); falls back to exact code/abbreviation equality when name
+    matching fails — needed for Toronto Tempo specifically, where BDL
+    returned just "Tempo" (no city) so Kalshi's side name "Toronto"
+    had nothing to substring-match against, even though both sides
+    agree on the short code "TOR". New expansion teams are the most
+    likely case to hit this gap; the abbreviation fallback is safe
+    for every sport since abbreviations are unique per team."""
     sides = kalshi_game.get("sides", [])
     if len(sides) != 2:
         return None, None, None
     side_a, side_b = sides
 
-    for shell in shells:
-        home_candidates = [{"name": shell.home_team.name}]
-        away_candidates = [{"name": shell.away_team.name}]
+    def side_matches_team(side: dict, team) -> bool:
+        if match_team_by_name(side.get("name", ""), [{"name": team.name}]):
+            return True
+        code = (side.get("code") or "").strip().upper()
+        abbrev = (getattr(team, "abbrev", "") or "").strip().upper()
+        return bool(code) and code == abbrev
 
-        if (match_team_by_name(side_a["name"], home_candidates)
-                and match_team_by_name(side_b["name"], away_candidates)):
+    for shell in shells:
+        if (side_matches_team(side_a, shell.home_team)
+                and side_matches_team(side_b, shell.away_team)):
             return shell, side_a, side_b
-        if (match_team_by_name(side_b["name"], home_candidates)
-                and match_team_by_name(side_a["name"], away_candidates)):
+        if (side_matches_team(side_b, shell.home_team)
+                and side_matches_team(side_a, shell.away_team)):
             return shell, side_b, side_a
     return None, None, None
 
