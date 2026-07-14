@@ -37,6 +37,16 @@ WNBA MIGRATION (2026-07-13):
     copied over (the public MLB accuracy record survives untouched).
     Databases already migrated (or created fresh) are left alone, so
     this is safe to run on every startup.
+
+KALSHI COLUMNS (2026-07-14):
+    Three new columns on predictions — kalshi_event_ticker (TEXT),
+    kalshi_home_prob (REAL), kalshi_away_prob (REAL) — added the same
+    safe way pitching_matchup was: a plain ALTER TABLE ADD COLUMN
+    wrapped in try/except OperationalError. Unlike the CHECK-constraint
+    migration, this doesn't need a table rebuild (adding a nullable-
+    with-default column is always safe in SQLite). Old rows get the
+    defaults ('' / 0.0); new predictions carry real values when a
+    Kalshi market was matched.
 """
 
 import sqlite3
@@ -144,6 +154,22 @@ def init_db() -> None:
                          "pitching_matchup TEXT NOT NULL DEFAULT '{}'")
         except sqlite3.OperationalError:
             pass   # column already exists
+
+        # Migration: Kalshi columns added 2026-07-14. Same safe
+        # additive pattern — no table rebuild needed, just three new
+        # nullable-with-default columns.
+        for ddl in (
+            "ALTER TABLE predictions ADD COLUMN "
+            "kalshi_event_ticker TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE predictions ADD COLUMN "
+            "kalshi_home_prob REAL NOT NULL DEFAULT 0.0",
+            "ALTER TABLE predictions ADD COLUMN "
+            "kalshi_away_prob REAL NOT NULL DEFAULT 0.0",
+        ):
+            try:
+                conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass   # column already exists
 
     # WNBA migration runs on its own connection (needs foreign_keys OFF
     # for the table rebuild — get_conn() forces it ON).
@@ -260,8 +286,9 @@ def save_prediction(pred) -> None:
                 score_low_home, score_med_home, score_high_home,
                 score_low_away, score_med_away, score_high_away,
                 player_projections, confidence, win_confidence,
-                simulations_run, generated_at, stored_at, pitching_matchup
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                simulations_run, generated_at, stored_at, pitching_matchup,
+                kalshi_event_ticker, kalshi_home_prob, kalshi_away_prob
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id) DO UPDATE SET
                 home_win_pct = excluded.home_win_pct,
                 away_win_pct = excluded.away_win_pct,
@@ -277,7 +304,10 @@ def save_prediction(pred) -> None:
                 simulations_run = excluded.simulations_run,
                 generated_at = excluded.generated_at,
                 stored_at = excluded.stored_at,
-                pitching_matchup = excluded.pitching_matchup
+                pitching_matchup = excluded.pitching_matchup,
+                kalshi_event_ticker = excluded.kalshi_event_ticker,
+                kalshi_home_prob = excluded.kalshi_home_prob,
+                kalshi_away_prob = excluded.kalshi_away_prob
             """,
             (
                 pred.game_id, _sport_value(pred.sport), pred.home_team, pred.away_team,
@@ -288,6 +318,9 @@ def save_prediction(pred) -> None:
                 pred.simulations_run, pred.generated_at,
                 datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 json.dumps(getattr(pred, "pitching_matchup", {}) or {}),
+                getattr(pred, "kalshi_event_ticker", "") or "",
+                getattr(pred, "kalshi_home_prob", 0.0) or 0.0,
+                getattr(pred, "kalshi_away_prob", 0.0) or 0.0,
             ),
         )
 
@@ -445,7 +478,7 @@ def get_accuracy_summary(sport: str = None) -> dict:
     }
 
 
-def get_recent_settles(limit: int = 10) -> list[dict]:
+def get_recent_settles(limit: int = 10, sport: str = None) -> list[dict]:
     """Matches main.py: db.get_recent_settles(limit=10).
 
     JOINs predictions for home_team/away_team — the settles table only
@@ -453,21 +486,29 @@ def get_recent_settles(limit: int = 10) -> list[dict]:
     the join the frontend's `${s.home_team} @ ${s.away_team}` read
     undefined off every row ("undefined @ undefined" on the Accuracy tab).
 
-    CS2 excluded (2026-07-14) — same reasoning as get_accuracy_summary's
-    blended number: this feed is part of the public accuracy dashboard,
-    and CS2's roster volatility makes it a different reliability signal
-    than the other sports. CS2 results still show on Games tab cards."""
+    CS2 excluded unconditionally (2026-07-14) — same reasoning as
+    get_accuracy_summary's blended number: this feed is part of the
+    public accuracy dashboard, and CS2's roster volatility makes it a
+    different reliability signal than the other sports. CS2 results
+    still show on Games tab cards. The optional `sport` param (added
+    for the Accuracy tab's per-sport dropdown) narrows further to one
+    of MLB/NBA/WNBA on top of that — passing sport='CS2' here would
+    just return zero rows, not bypass the exclusion."""
+    query = """
+        SELECT s.*, p.home_team AS home_team, p.away_team AS away_team
+        FROM settles s
+        JOIN predictions p ON p.game_id = s.game_id
+        WHERE s.sport != 'CS2'
+    """
+    params = []
+    if sport:
+        query += " AND s.sport = ?"
+        params.append(sport.upper())
+    query += " ORDER BY s.settled_at DESC LIMIT ?"
+    params.append(limit)
+
     with get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT s.*, p.home_team AS home_team, p.away_team AS away_team
-            FROM settles s
-            JOIN predictions p ON p.game_id = s.game_id
-            WHERE s.sport != 'CS2'
-            ORDER BY s.settled_at DESC LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+        rows = conn.execute(query, params).fetchall()
 
     out = []
     for r in rows:
