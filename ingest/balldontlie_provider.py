@@ -52,6 +52,31 @@ PROBABLE STARTERS (2026-07-12):
     BDL player id (so real stats hydrate). Live lineup > probable >
     rotation avg, in that order. See _apply_probable_starters.
 
+KALSHI SCHEDULE + ODDS (2026-07-14):
+    NexGame Lite is now a gambling-analytics tool, not pure data
+    science — Kalshi (CFTC-regulated, read-only public market data,
+    no auth needed, VERIFIED live) is now the PRIMARY schedule filter
+    across all four sports: get_games_for_date only returns games that
+    exist as real Kalshi markets, matched by team NAME (not code —
+    Kalshi's team codes are inconsistent across sports and CS2's are
+    fully arbitrary per-event strings with no relationship to the
+    team name at all) against BDL's own game data for the same date.
+
+    Matching is done SHELL-BY-SHELL, never globally — for each Kalshi
+    game, both its sides must match ONE SPECIFIC BDL game's home+away
+    (in either order), so two different games' teams can never get
+    cross-wired. A Kalshi game with no BDL match is skipped entirely
+    (never shown with fabricated stats); a BDL game with no Kalshi
+    market is also skipped (Kalshi genuinely drives what's shown now).
+    See ingest/kalshi_client.py for the tested ticker-parsing and
+    name-matching logic this depends on.
+
+    Every existing per-game method (get_game_context, get_final_boxscore,
+    settling) is UNCHANGED — they still receive a real BDL game_id and
+    work exactly as before. Kalshi only changes WHICH games appear in
+    the list, and attaches kalshi_event_ticker/kalshi_home_prob/
+    kalshi_away_prob onto the GameContext for display.
+
 Docs: https://docs.balldontlie.io/  (NBA)  ·  https://mlb.balldontlie.io/
 Auth: header "Authorization: <api_key>" — no "Bearer" prefix.
 """
@@ -62,6 +87,7 @@ import requests
 
 import config
 from ingest.base import DataProvider
+from ingest.kalshi_client import get_kalshi_games, match_team_by_name
 from models import (
     GameContext, PlayerStats, TeamData,
     Sport, GameStatus, InjuryStatus,
@@ -183,6 +209,47 @@ def _score(g: dict, side: str) -> int:
     return 0
 
 
+def _match_kalshi_to_shell(kalshi_game: dict, shells: list):
+    """Match one Kalshi game's two sides against a list of BDL
+    GameContext shells for the same date. SHELL-BY-SHELL matching
+    (never a global team-name lookup across all shells) so two
+    different games' teams can never cross-wire — e.g. if two
+    different Yankees games somehow existed for the same date, a
+    global match could attach the wrong odds to the wrong game.
+
+    Returns (shell, home_side, away_side) — home_side/away_side are
+    the Kalshi side dicts correctly assigned to match the shell's
+    actual home/away (Kalshi's own side order isn't guaranteed to
+    match BDL's home/away convention). Returns (None, None, None) if
+    no shell's both teams match this Kalshi game's both sides."""
+    sides = kalshi_game.get("sides", [])
+    if len(sides) != 2:
+        return None, None, None
+    side_a, side_b = sides
+
+    for shell in shells:
+        home_candidates = [{"name": shell.home_team.name}]
+        away_candidates = [{"name": shell.away_team.name}]
+
+        if (match_team_by_name(side_a["name"], home_candidates)
+                and match_team_by_name(side_b["name"], away_candidates)):
+            return shell, side_a, side_b
+        if (match_team_by_name(side_b["name"], home_candidates)
+                and match_team_by_name(side_a["name"], away_candidates)):
+            return shell, side_b, side_a
+    return None, None, None
+
+
+def _mid_prob(side: dict) -> float:
+    """Kalshi yes_bid/yes_ask midpoint as a 0-100 probability, matching
+    home_win_pct's scale. Returns 0.0 if bid/ask are both zero (no
+    liquidity yet) rather than a misleading 50.0."""
+    bid, ask = side.get("yes_bid", 0.0), side.get("yes_ask", 0.0)
+    if bid <= 0 and ask <= 0:
+        return 0.0
+    return round((bid + ask) / 2 * 100, 1)
+
+
 class BallDontLieProvider(DataProvider):
     """Production provider — GOAT tier, MLB + NBA. Same DataProvider
     interface as mock/free/mysportsfeeds — engine, settling, and
@@ -214,7 +281,40 @@ class BallDontLieProvider(DataProvider):
 
     # ── interface ────────────────────────────────────────────────────
     def get_games_for_date(self, sport: Sport, date_str: str) -> list[GameContext]:
-        """FREE tier endpoint — schedule + score shell only."""
+        """PUBLIC ENTRY POINT — now Kalshi-gated (2026-07-14). Only
+        games that exist as real Kalshi markets are returned, each
+        enriched with kalshi_event_ticker/kalshi_home_prob/
+        kalshi_away_prob. Falls back to the plain BDL list (no Kalshi
+        fields) if the Kalshi fetch itself fails — a Kalshi outage
+        shouldn't take the whole schedule down."""
+        bdl_shells = self._bdl_shells_for_date(sport, date_str)
+
+        try:
+            kalshi_games = get_kalshi_games(sport.value, date_str)
+        except Exception:
+            return bdl_shells   # Kalshi unreachable — degrade gracefully
+
+        if not kalshi_games:
+            return []   # Kalshi is the schedule gate now — no markets,
+                        # no games shown, even if BDL has some listed
+
+        out = []
+        for kg in kalshi_games:
+            shell, home_side, away_side = _match_kalshi_to_shell(
+                kg, bdl_shells)
+            if shell is None:
+                continue   # no confident BDL match — skip, never guess
+            shell.kalshi_event_ticker = kg["event_ticker"]
+            shell.kalshi_home_prob = _mid_prob(home_side)
+            shell.kalshi_away_prob = _mid_prob(away_side)
+            out.append(shell)
+        return out
+
+    def _bdl_shells_for_date(self, sport: Sport,
+                             date_str: str) -> list[GameContext]:
+        """The ORIGINAL get_games_for_date logic, renamed to a private
+        helper — Kalshi-matching now sits on top of this, but every
+        sport's BDL fetch behavior is completely unchanged."""
         if sport == Sport.CS2:
             return self._cs2_matches_for_date(date_str)
 
@@ -231,7 +331,10 @@ class BallDontLieProvider(DataProvider):
         except ValueError:
             query_dates = [date_str]
 
-        data = self._get(sport, "games", params={"dates[]": query_dates})
+        try:
+            data = self._get(sport, "games", params={"dates[]": query_dates})
+        except requests.RequestException:
+            return []
 
         seen, shells = set(), []
         for g in data.get("data", []):
@@ -314,7 +417,11 @@ class BallDontLieProvider(DataProvider):
         )
 
     def get_game_context(self, game_id: str, sport: Sport) -> GameContext:
-        """GOAT tier: lineups + injuries + season stats hydration."""
+        """GOAT tier: lineups + injuries + season stats hydration.
+        UNCHANGED by the Kalshi integration — always receives a real
+        BDL game_id (Kalshi-matching happens one layer up, in
+        get_games_for_date), so this method's behavior is identical
+        to before Kalshi existed."""
         if sport == Sport.CS2:
             return self._cs2_game_context(game_id)
 
@@ -808,7 +915,10 @@ class BallDontLieProvider(DataProvider):
     def get_live_scores(self, sport: Sport) -> list[dict]:
         """FREE tier for schedule/score; GOAT unlocks true live box
         score granularity, but the base games endpoint updates scores
-        in near-real-time already, which covers the ticker's needs."""
+        in near-real-time already, which covers the ticker's needs.
+        UNCHANGED by Kalshi — the live ticker stays BDL-sourced (score
+        updates need low latency; Kalshi's market prices, not scores,
+        are the enrichment layer, applied at the schedule level only)."""
         if sport == Sport.CS2:
             return self._cs2_live_scores()
 
@@ -1042,8 +1152,6 @@ class BallDontLieProvider(DataProvider):
             "_cs2_map_line_score": line_score,
             "_cs2_period_label": m.get("status", ""),
         }
-
-
 
     # ── parsers ──────────────────────────────────────────────────────
     def _parse_game_shell(self, g: dict, sport: Sport) -> GameContext:

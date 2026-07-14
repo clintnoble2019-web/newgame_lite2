@@ -145,6 +145,14 @@ class GameContext:
     # CS2 context — series length (1/3/5). home_team/away_team map
     # onto CS2's team1/team2 (CS2 has no home/away convention).
     best_of: int = 3
+    # Kalshi market data (added 2026-07-14): matched by team name
+    # against the real BDL game, not a separate schedule — see
+    # ingest/kalshi_client.py + provider get_games_for_date. Empty
+    # string/0.0 when no Kalshi market matched this game (game still
+    # shows using BDL data alone in that case — never fabricated).
+    kalshi_event_ticker: str = ""
+    kalshi_home_prob: float = 0.0   # 0-100 scale, matches home_win_pct
+    kalshi_away_prob: float = 0.0
 
 
 # ── Simulation output ─────────────────────────────────────────────────
@@ -182,6 +190,12 @@ class SimulationOutput:
     # cached payloads (predicted before this field existed)
     # deserializable via SimulationOutput(**payload).
     pitching_matchup: dict = field(default_factory=dict)
+    # Kalshi market data (added 2026-07-14) — carried from GameContext
+    # into the stored/displayed prediction. Defaults keep old cached
+    # payloads (predicted before this field existed) deserializable.
+    kalshi_event_ticker: str = ""
+    kalshi_home_prob: float = 0.0
+    kalshi_away_prob: float = 0.0
 
 
 # ── Settling ──────────────────────────────────────────────────────────
