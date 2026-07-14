@@ -165,7 +165,7 @@ def run_simulation(context: GameContext,
             "away": _pitcher_block(context.away_team),
         }
 
- # Margin confidence measures the MARGIN, not each team's individual
+    # Margin confidence measures the MARGIN, not each team's individual
     # score spread. Redefined 2026-07-11: previously max(team range
     # widths), which called overlapping ranges (e.g. 3-6 vs 1-3, where
     # anything from a tie to a 5-run blowout is in play) a "tight
@@ -190,4 +190,12 @@ def run_simulation(context: GameContext,
         simulations_run=runs,
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         pitching_matchup=pitching_matchup,
+        # Kalshi market data (added 2026-07-14) — carried straight
+        # through from the GameContext the provider already attached
+        # it to in get_games_for_date. Defaults to "" / 0.0 on
+        # GameContext when no Kalshi market matched this game, so this
+        # is always safe to read even for an unmatched/legacy game.
+        kalshi_event_ticker=getattr(context, "kalshi_event_ticker", ""),
+        kalshi_home_prob=getattr(context, "kalshi_home_prob", 0.0),
+        kalshi_away_prob=getattr(context, "kalshi_away_prob", 0.0),
     )
