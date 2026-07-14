@@ -265,6 +265,36 @@ def _mid_prob(side: dict) -> float:
     return round((bid + ask) / 2 * 100, 1)
 
 
+def _attach_kalshi_odds_to_shell(shell: GameContext) -> None:
+    """Attach Kalshi odds to a SINGLE GameContext already built via a
+    per-game fetch (get_game_context / _cs2_game_context).
+
+    BUG FIXED 2026-07-14: those two methods build their own fresh
+    GameContext independent of get_games_for_date's list — so without
+    this call, a game that appeared correctly Kalshi-matched in the
+    schedule (proof the market exists and matches) would still run
+    its actual prediction with kalshi_event_ticker="" and 0.0 probs,
+    because get_game_context never re-ran the matching step at all.
+    VERIFIED live: Run Prediction on a schedule-listed WNBA game
+    (Washington @ Tempo) showed no Kalshi line despite the game only
+    appearing in the list because it WAS matched.
+
+    Mutates shell in place; no-op on any failure (never blocks a
+    prediction from running just because Kalshi is unreachable)."""
+    try:
+        kalshi_games = get_kalshi_games(shell.sport.value, shell.game_date)
+    except Exception:
+        return
+    for kg in kalshi_games:
+        matched_shell, home_side, away_side = _match_kalshi_to_shell(
+            kg, [shell])
+        if matched_shell is not None:
+            shell.kalshi_event_ticker = kg["event_ticker"]
+            shell.kalshi_home_prob = _mid_prob(home_side)
+            shell.kalshi_away_prob = _mid_prob(away_side)
+            return
+
+
 class BallDontLieProvider(DataProvider):
     """Production provider — GOAT tier, MLB + NBA. Same DataProvider
     interface as mock/free/mysportsfeeds — engine, settling, and
@@ -517,6 +547,7 @@ class BallDontLieProvider(DataProvider):
             for p in shell.home_team.roster + shell.away_team.roster:
                 self._hydrate_player_stats(p, sport)
 
+        _attach_kalshi_odds_to_shell(shell)
         return shell
 
     def _apply_wnba_injuries(self, team: TeamData):
@@ -619,6 +650,7 @@ class BallDontLieProvider(DataProvider):
                     team, tourney_id, match_id)
             except requests.RequestException:
                 pass   # keep league-avg defaults (LOCKED fail-safe pattern)
+        _attach_kalshi_odds_to_shell(shell)
         return shell
 
     def _hydrate_cs2_team_and_players(self, team: TeamData,
