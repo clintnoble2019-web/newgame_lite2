@@ -41,22 +41,67 @@ def _availability_roll(player: PlayerStats, rng: random.Random) -> float:
     return 0.0
 
 
-def _active_rotation(team, rng: random.Random) -> list[tuple]:
-    """Roll injury availability once per iteration.
-    Returns [(player, capacity)]. Minutes of unavailable players are
-    implicitly redistributed via usage renormalization — roster object
-    never modified (LOCKED)."""
-    rotation = []
+def _active_rotation(team, rng: random.Random, lp: dict) -> list[tuple]:
+    """Roll injury availability, then build a REAL rotation instead of
+    just including every available roster player on equal footing.
+
+    Previously every healthy player entered scoring-credit with equal
+    structural standing — a 10th-man scrub and a 35-minute starter
+    were only differentiated by raw usage_rate. Real teams only give
+    meaningful burn to ~8-10 players; the rest is mop-up time that
+    barely shows up in a box score. Two real fixes here:
+      1. Cap the rotation to NBA_ROTATION_SIZE, ranked by minutes_proj
+         (deep bench falls out entirely — they weren't scoring
+         meaningfully anyway, and including them just diluted shares).
+      2. Normalize the survivors' minutes to the REAL team minute
+         budget (5 players x regulation_min = 240 NBA / 200 WNBA).
+         Raw hydrated minutes_proj values are independent per-player
+         season averages that won't necessarily sum correctly on
+         their own — normalizing guarantees the on-court total is
+         always right, while preserving each player's relative share.
+
+    Returns [(player, capacity, minutes_share)] — minutes_share is
+    this player's normalized per-game minutes, consumed by _quarter
+    to scale their scoring-credit weight per period actually played.
+    """
+    available = []
     for p in team.roster:
         cap = _availability_roll(p, rng)
         if cap > 0:
-            rotation.append((p, cap))
-    if not rotation:                      # extreme edge: everyone out
-        rotation = [(PlayerStats(
+            available.append((p, cap))
+    if not available:                      # extreme edge: everyone out
+        filler = PlayerStats(
             player_id=f"{team.team_id}_avg", name=f"{team.abbrev} Avg",
             sport=team.sport, ppg=10.0, usage_rate=0.20,
-            minutes_proj=24, data_source="team_avg"), 1.0)]
-    return rotation
+            minutes_proj=24, data_source="team_avg")
+        return [(filler, 1.0, float(lp["regulation_min"]) / 5)]
+
+    def raw_minutes(p):
+        # NOTE: no "or default" fallback here on purpose. A genuinely
+        # hydrated 0.0 (player truly doesn't play, or roster-fallback
+        # players who haven't hydrated minutes yet) must sort to the
+        # BOTTOM and correctly fall out of the rotation cap — an
+        # earlier version of this used `p.minutes_proj or DEFAULT`,
+        # which treated real zeros as "missing" and promoted them
+        # above legitimate bench players with actual minutes. Caught
+        # in testing before deploy (2026-07-14).
+        return p.minutes_proj
+
+    available.sort(key=lambda pc: raw_minutes(pc[0]), reverse=True)
+    rotation = available[:config.NBA_ROTATION_SIZE]
+
+    total_raw = sum(raw_minutes(p) for p, cap in rotation)
+    team_minute_budget = lp["regulation_min"] * 5   # 5 players on court
+    if total_raw <= 0:
+        # Extreme edge: nobody in the capped rotation has hydrated
+        # minutes at all. Split the real team budget evenly rather
+        # than crash on a divide-by-zero or silently favor zeros.
+        equal_share = team_minute_budget / len(rotation)
+        return [(p, cap, equal_share) for p, cap in rotation]
+    return [
+        (p, cap, raw_minutes(p) / total_raw * team_minute_budget)
+        for p, cap in rotation
+    ]
 
 
 def _points_per_possession(ortg: float, opp_drtg: float,
@@ -96,10 +141,21 @@ def _quarter(off_rotation: list, ortg: float, opp_drtg: float,
         * (minutes / lp["regulation_min"]), 1.8)))
     ppp = _points_per_possession(ortg, opp_drtg, lp)
 
-    # usage shares (injury capacity + foul trouble reduce share)
+    # Scoring-credit shares: usage (touches) x minutes actually played
+    # THIS period (from the rotation's normalized per-game share,
+    # scaled to this period's fraction of the game) x shooting
+    # efficiency (true_shooting vs league average) x availability.
+    # Efficiency weighting means a low-usage, high-efficiency player
+    # gets proportionally MORE credit than raw usage alone would give
+    # them, and vice versa — previously a 38% shooter and a 60% TS
+    # player with equal usage were credited identically.
     shares = []
-    for p, cap in off_rotation:
-        share = (p.usage_rate or 0.18) * (p.minutes_proj or 20) * cap
+    for p, cap, min_share in off_rotation:
+        minutes_this_period = min_share * (minutes / lp["regulation_min"])
+        efficiency_factor = ((p.true_shooting or config.LEAGUE_AVG_TS)
+                             / config.LEAGUE_AVG_TS)
+        share = ((p.usage_rate or 0.18) * minutes_this_period
+                * cap * efficiency_factor)
         if p.player_id in foul_trouble:
             share *= 0.55                 # foul trouble: benched earlier
         shares.append(share)
@@ -110,10 +166,10 @@ def _quarter(off_rotation: list, ortg: float, opp_drtg: float,
         scored = _sample_possession(ppp, rng)
         if scored:
             pts += scored
-            # credit a player by usage share
+            # credit a player by (usage x minutes x efficiency) share
             roll = rng.random() * total_share
             cum = 0.0
-            for (p, cap), share in zip(off_rotation, shares):
+            for (p, cap, min_share), share in zip(off_rotation, shares):
                 cum += share
                 if roll <= cum:
                     sl = stat_lines.setdefault(
@@ -129,9 +185,13 @@ def _accumulate_hustle(rotation: list, stat_lines: dict,
                        minutes: float, rng: random.Random, lp: dict,
                        team_abbrev: str = ""):
     """Assists + rebounds per period, scaled from per-game averages
-    over the correct regulation length (48 NBA / 40 WNBA)."""
+    over the correct regulation length (48 NBA / 40 WNBA). Each
+    player's own apg/rpg already implicitly encodes their real
+    minutes distribution, so the per-period fraction alone (not
+    minutes_share) is the right scale here — minutes_share is unused
+    in this function on purpose."""
     frac = minutes / lp["regulation_min"]
-    for p, cap in rotation:
+    for p, cap, min_share in rotation:
         sl = stat_lines.setdefault(
             p.player_id,
             {"name": p.name, "_team": team_abbrev, "points": 0,
@@ -144,10 +204,10 @@ def simulate_nba_game(context: GameContext,
                       rng: random.Random) -> IterationResult:
     """ONE iteration. Called 10,000 times by the aggregator."""
     home, away = context.home_team, context.away_team
-
-    home_rot = _active_rotation(home, rng)
-    away_rot = _active_rotation(away, rng)
     lp = _league_params(context.sport)
+
+    home_rot = _active_rotation(home, rng, lp)
+    away_rot = _active_rotation(away, rng, lp)
 
     home_score = away_score = 0
     stat_lines: dict = {}
@@ -178,7 +238,7 @@ def simulate_nba_game(context: GameContext,
         periods.append({"period": f"Q{q}", "home": h, "away": a})
 
         # foul trouble check after each quarter (LOCKED decision node)
-        for p, cap in home_rot + away_rot:
+        for p, cap, min_share in home_rot + away_rot:
             if p.is_starter_nba and rng.random() < 0.04:
                 foul_trouble.add(p.player_id)
 

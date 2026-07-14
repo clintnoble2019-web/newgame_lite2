@@ -46,6 +46,20 @@ ROLLING_WINDOW = 15             # last-15-games window everywhere
 
 # ── Injury probability weights (LOCKED) ──────────────────────────────
 # Players are NEVER removed from roster — only weighted.
+# Rotation construction (added for efficiency-vs-minutes upgrade,
+# 2026-07-14): real NBA/WNBA teams rarely give meaningful minutes
+# beyond ~10 players — capping the sim's rotation the same way stops
+# deep-bench players from diluting the scoring-credit pool on equal
+# structural footing with starters.
+NBA_ROTATION_SIZE = 10
+# League-average true shooting %, used to weight scoring credit by
+# efficiency (not just usage/minutes) — matches the fallback default
+# already used when hydrating a player's true_shooting.
+LEAGUE_AVG_TS = 0.560
+# Fallback minutes_proj when a player's hydrated value is 0/missing —
+# needed so the minutes-ranking sort has something sane to work with.
+PLAYER_MIN_MINUTES_DEFAULT = 15.0
+
 INJURY_WEIGHTS = {
     "active":       {"plays": 1.00, "capacity": 1.00},
     "probable":     {"plays": 0.85, "capacity": 0.90},
