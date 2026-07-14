@@ -290,7 +290,7 @@ def accuracy(sport: str = Query(default=None)):
     return {
         "overall": overall,
         "by_sport": by_sport,
-        "recent": db.get_recent_settles(limit=10),
+        "recent": db.get_recent_settles(limit=10, sport=sport),
         "provider": config.DATA_PROVIDER,
         "simulations_per_game": config.SIMULATION_RUNS,
     }

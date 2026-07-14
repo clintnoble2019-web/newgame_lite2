@@ -400,12 +400,24 @@ def get_accuracy_summary(sport: str = None) -> dict:
     (Previously this returned win_loss_accuracy/score_range_accuracy/
     avg_player_accuracy_pct as 0-1 fractions under different names, which
     the frontend didn't recognize -> rendered as "undefined%".)
+
+    CS2 EXCLUDED FROM THE BLENDED "ALL" NUMBER (2026-07-14): CS2 roster
+    composition varies too much match-to-match (frequent stand-ins) to
+    track consistently against a fixed prediction the way MLB/NBA/WNBA
+    rosters do — folding CS2 into the headline accuracy % would blend in
+    a fundamentally different reliability signal. CS2 win/loss still
+    settles and displays normally on individual game cards; it's only
+    excluded from THIS blended figure. An explicit sport='CS2' query
+    still returns real computed numbers (unchanged) — the exclusion is
+    only applied when sport is None (the "overall" blend).
     """
     query = "SELECT win_loss_correct, score_range_correct, player_accuracy_pct FROM settles"
     params = []
     if sport:
         query += " WHERE sport = ?"
         params.append(sport.upper())
+    else:
+        query += " WHERE sport != 'CS2'"
 
     with get_conn() as conn:
         rows = conn.execute(query, params).fetchall()
@@ -440,13 +452,18 @@ def get_recent_settles(limit: int = 10) -> list[dict]:
     stores actual_home/actual_away scores, not team names, so without
     the join the frontend's `${s.home_team} @ ${s.away_team}` read
     undefined off every row ("undefined @ undefined" on the Accuracy tab).
-    """
+
+    CS2 excluded (2026-07-14) — same reasoning as get_accuracy_summary's
+    blended number: this feed is part of the public accuracy dashboard,
+    and CS2's roster volatility makes it a different reliability signal
+    than the other sports. CS2 results still show on Games tab cards."""
     with get_conn() as conn:
         rows = conn.execute(
             """
             SELECT s.*, p.home_team AS home_team, p.away_team AS away_team
             FROM settles s
             JOIN predictions p ON p.game_id = s.game_id
+            WHERE s.sport != 'CS2'
             ORDER BY s.settled_at DESC LIMIT ?
             """,
             (limit,),
@@ -487,13 +504,32 @@ def get_predictions_for_games(game_ids: list[str]) -> dict:
 
 def get_settles_for_games(game_ids: list[str]) -> dict:
     """Bulk-fetch settle results for a list of game_ids, keyed by
-    game_id. Powers the per-game grade shown on the Games tab."""
+    game_id. Powers the per-game grade shown on the Games tab.
+
+    JOINS predictions for home_team/away_team (2026-07-13 fix — same
+    reasoning as get_recent_settles' join). WITHOUT this, the frontend
+    fell back to re-fetching the live games list to label 'home'/
+    'away' as real team names — and a live re-fetch isn't guaranteed
+    to return teams in the same order as when the pick was originally
+    made (observed live on CS2: BallDontLie's match team1/team2 order
+    isn't provably stable across separate calls for the same match).
+    That caused a genuinely correct, correctly-graded pick (Inner
+    Circle Academy favored, Inner Circle Academy won) to DISPLAY with
+    swapped team names ("predicted BRUTE, actual BRUTE") even though
+    the underlying win_loss_correct=1 grading was right all along.
+    Sourcing team names from the settle's own predictions row instead
+    makes the display immune to any later API re-ordering."""
     if not game_ids:
         return {}
     placeholders = ",".join("?" for _ in game_ids)
     with get_conn() as conn:
         rows = conn.execute(
-            f"SELECT * FROM settles WHERE game_id IN ({placeholders})",
+            f"""
+            SELECT s.*, p.home_team AS home_team, p.away_team AS away_team
+            FROM settles s
+            JOIN predictions p ON p.game_id = s.game_id
+            WHERE s.game_id IN ({placeholders})
+            """,
             game_ids,
         ).fetchall()
     out = {}
