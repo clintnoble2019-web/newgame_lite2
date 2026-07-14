@@ -486,6 +486,12 @@ function renderPrediction(gameId, p, settled) {
         <span class="badge ${p.win_confidence || 'toss_up'}" title="How lopsided the win probability is">${winLabel}</span>
         <span>${p.away_team} ${p.away_win_pct}%</span>
       </div>
+      ${p.kalshi_event_ticker ? `
+      <div class="winlabels" style="margin-top:2px;color:var(--dim);font-size:.78rem" title="Kalshi's real-money market-implied probability (yes_bid+yes_ask midpoint)">
+        <span>Kalshi ${p.kalshi_home_prob}%</span>
+        <span></span>
+        <span>Kalshi ${p.kalshi_away_prob}%</span>
+      </div>` : ''}
     </div>
     ${matchupHtml}
     <div class="section-title" style="margin-top:14px">Predicted Score (Median)
