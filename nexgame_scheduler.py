@@ -32,6 +32,20 @@ Add to api/main.py:
     @app.on_event("shutdown")
     def _on_shutdown():
         shutdown_scheduler()
+
+KALSHI ODDS BACKFILL (2026-07-14):
+    lock_and_predict_job deliberately never re-predicts a game it's
+    already locked (see the comment on that skip below) — but that
+    means a game predicted BEFORE a Kalshi market opened stayed
+    permanently frozen with no odds, since nothing ever re-checked it.
+    settle_job already calls get_game_context on every unsettled
+    prediction each tick (to check FINAL status) — and get_game_context
+    already re-attaches fresh Kalshi odds every time it runs (see
+    ingest/balldontlie_provider.py's _attach_kalshi_odds_to_shell).
+    That data was just being fetched and discarded. Now it's written
+    back via db.update_kalshi_odds() — a targeted update that touches
+    ONLY the three Kalshi columns, never the locked prediction fields
+    that feed the graded win%/score-range/player projections.
 """
 
 import logging
@@ -143,6 +157,13 @@ def settle_job():
     For every prediction not yet settled, checks whether the game is
     FINAL. If so, pulls the boxscore, runs it through the same
     settle_game() pipeline main.py uses, and writes the result.
+
+    KALSHI BACKFILL: also runs on EVERY unsettled prediction, whether
+    or not the game is final yet — get_game_context already re-runs
+    the Kalshi match as a side effect (see module docstring), so this
+    is a zero-extra-cost way to catch odds that appeared after the
+    original prediction was locked. Only writes when something
+    actually changed, to avoid pointless DB churn every 15 minutes.
     """
     provider = _get_provider()
 
@@ -158,6 +179,26 @@ def settle_job():
             except Exception:
                 logger.exception("get_game_context failed while settling %s", game_id)
                 continue
+
+            # KALSHI BACKFILL — safe on any tick, settled or not: only
+            # touches the three odds columns, never the locked
+            # prediction fields that feed grading.
+            new_ticker = getattr(context, "kalshi_event_ticker", "") or ""
+            stored_ticker = row.get("kalshi_event_ticker") or ""
+            if new_ticker and new_ticker != stored_ticker:
+                try:
+                    db.update_kalshi_odds(
+                        game_id, new_ticker,
+                        getattr(context, "kalshi_home_prob", 0.0) or 0.0,
+                        getattr(context, "kalshi_away_prob", 0.0) or 0.0,
+                    )
+                    logger.info(
+                        "Backfilled Kalshi odds for %s (%s)",
+                        game_id, new_ticker,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Kalshi odds backfill failed for %s", game_id)
 
             if context.status != GameStatus.FINAL:
                 continue  # not done yet, try again next cycle

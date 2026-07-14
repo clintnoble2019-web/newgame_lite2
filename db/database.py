@@ -269,6 +269,34 @@ def _sport_value(sport) -> str:
 # Predictions
 # ---------------------------------------------------------------------------
 
+def update_kalshi_odds(game_id: str, event_ticker: str,
+                       home_prob: float, away_prob: float) -> None:
+    """Refresh ONLY the three Kalshi columns on an already-stored
+    prediction — added 2026-07-14 to fix a real gap: a game predicted
+    before a Kalshi market opened stayed permanently frozen with no
+    odds, since lock_and_predict_job never re-predicts a game it's
+    already locked (by design — re-running the simulation on a tick
+    would silently drift win%/score ranges after the fact, undermining
+    the whole point of a locked, gradeable prediction).
+
+    Kalshi odds are pure display data — they never feed the model's
+    win%, score ranges, or anything that gets graded — so refreshing
+    them on a tick is safe in a way re-running the simulation isn't.
+    This function ONLY updates these three columns; every other field
+    on the prediction stays exactly as originally locked."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE predictions SET
+                kalshi_event_ticker = ?,
+                kalshi_home_prob = ?,
+                kalshi_away_prob = ?
+            WHERE game_id = ?
+            """,
+            (event_ticker or "", home_prob or 0.0, away_prob or 0.0, game_id),
+        )
+
+
 def save_prediction(pred) -> None:
     """
     pred: models.SimulationOutput

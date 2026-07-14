@@ -326,12 +326,28 @@ class BallDontLieProvider(DataProvider):
 
     # ── interface ────────────────────────────────────────────────────
     def get_games_for_date(self, sport: Sport, date_str: str) -> list[GameContext]:
-        """PUBLIC ENTRY POINT — now Kalshi-gated (2026-07-14). Only
-        games that exist as real Kalshi markets are returned, each
-        enriched with kalshi_event_ticker/kalshi_home_prob/
-        kalshi_away_prob. Falls back to the plain BDL list (no Kalshi
-        fields) if the Kalshi fetch itself fails — a Kalshi outage
-        shouldn't take the whole schedule down."""
+        """PUBLIC ENTRY POINT — Kalshi-integrated (2026-07-14), with
+        TWO different strategies depending on real market coverage:
+
+        MLB/NBA/WNBA: fully Kalshi-gated. Only games that exist as
+        real Kalshi markets are returned. Coverage is dense enough
+        here (VERIFIED live: WNBA correctly matched real games) that
+        this doesn't meaningfully shrink the schedule.
+
+        CS2: NOT gated — show every real BDL match, with Kalshi-
+        matched ones enriched with odds AND sorted to the top.
+        VERIFIED live 2026-07-14: Kalshi only had 2 open CS2 markets
+        against 28 real BDL matches that same day, and the 2 Kalshi
+        matches didn't even overlap with BDL's "current tournament"
+        list — full gating would have hidden 26 of 28 real matches.
+        This isn't a matching bug (see the abbreviation-fallback fix
+        for a real bug); it's that Kalshi's actual CS2 coverage is
+        just thin. Games without a Kalshi match simply show without
+        the odds line, same as any other unmatched game.
+
+        Falls back to the plain BDL list (no Kalshi fields) if the
+        Kalshi fetch itself fails — a Kalshi outage shouldn't take
+        the whole schedule down, for any sport."""
         bdl_shells = self._bdl_shells_for_date(sport, date_str)
 
         try:
@@ -339,9 +355,24 @@ class BallDontLieProvider(DataProvider):
         except Exception:
             return bdl_shells   # Kalshi unreachable — degrade gracefully
 
+        if sport == Sport.CS2:
+            for kg in kalshi_games:
+                shell, home_side, away_side = _match_kalshi_to_shell(
+                    kg, bdl_shells)
+                if shell is None:
+                    continue   # no confident match — leave unenriched
+                shell.kalshi_event_ticker = kg["event_ticker"]
+                shell.kalshi_home_prob = _mid_prob(home_side)
+                shell.kalshi_away_prob = _mid_prob(away_side)
+            # Kalshi-matched games first, preserving original relative
+            # order within each group (stable sort).
+            bdl_shells.sort(
+                key=lambda s: 0 if s.kalshi_event_ticker else 1)
+            return bdl_shells
+
         if not kalshi_games:
-            return []   # Kalshi is the schedule gate now — no markets,
-                        # no games shown, even if BDL has some listed
+            return []   # Kalshi is the schedule gate for these sports —
+                        # no markets, no games shown, even if BDL has some
 
         out = []
         for kg in kalshi_games:
