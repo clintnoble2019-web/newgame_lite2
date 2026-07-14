@@ -222,12 +222,26 @@ def simulate_nba_game(context: GameContext,
     if context.back_to_back_away:
         away_ortg -= 1.8
 
+    # PACE FIX (2026-07-14): pace is a MUTUAL, game-level property in
+    # real basketball — both teams share essentially the same number
+    # of possessions in a given game. Previously each side's quarter
+    # independently rolled ITS OWN possession count from ITS OWN
+    # team_pace, giving the higher-pace team more total possessions
+    # than its opponent in the same game — a made-up advantage with
+    # no basketball basis. Worse for WNBA specifically: pace is
+    # DERIVED from combined scoring (see provider), the same signal
+    # already feeding ORtg/DRtg — so a high-scoring team got rewarded
+    # twice, once via rating and again via an inflated, unshared
+    # possession count. Blending into one shared pace fixes both.
+    game_pace = ((home.team_pace or lp["avg_pace"])
+                + (away.team_pace or lp["avg_pace"])) / 2
+
     for q in range(1, 5):
         h = _quarter(home_rot, home_ortg, away.team_drtg,
-                     home.team_pace, lp["quarter_min"], foul_trouble,
+                     game_pace, lp["quarter_min"], foul_trouble,
                      stat_lines, rng, lp, home.abbrev)
         a = _quarter(away_rot, away_ortg, home.team_drtg,
-                     away.team_pace, lp["quarter_min"], foul_trouble,
+                     game_pace, lp["quarter_min"], foul_trouble,
                      stat_lines, rng, lp, away.abbrev)
         _accumulate_hustle(home_rot, stat_lines, lp["quarter_min"], rng,
                            lp, home.abbrev)
@@ -246,10 +260,10 @@ def simulate_nba_game(context: GameContext,
     ot = 1
     while home_score == away_score:
         h = _quarter(home_rot, home_ortg, away.team_drtg,
-                     home.team_pace, 5, foul_trouble, stat_lines, rng,
+                     game_pace, 5, foul_trouble, stat_lines, rng,
                      lp, home.abbrev)
         a = _quarter(away_rot, away_ortg, home.team_drtg,
-                     away.team_pace, 5, foul_trouble, stat_lines, rng,
+                     game_pace, 5, foul_trouble, stat_lines, rng,
                      lp, away.abbrev)
         home_score += h
         away_score += a
