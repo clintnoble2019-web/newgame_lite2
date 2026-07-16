@@ -18,6 +18,12 @@ Endpoints:
     GET  /api/games/{sport}?date=YYYY-MM-DD   [auth required]
     GET  /api/live/{sport}       live score ticker             [auth required]
     POST /api/predict/{game_id}?sport=MLB   run 10,000 sims    [auth required]
+    POST /api/read/{game_id}?regenerate=false   AI talking-points read
+                                            on a locked prediction, cached
+                                            after first generation
+                                                                [auth required]
+    GET  /api/read/{game_id}     fetch a cached read, 404 if none yet
+                                                                [auth required]
     POST /api/settle/{game_id}?sport=MLB    settle vs final    [auth required]
     GET  /api/accuracy?sport=MLB  PUBLIC — the credibility engine, no login
 
@@ -237,6 +243,45 @@ def get_prediction(game_id: str,
     if game_id not in _predictions:
         raise HTTPException(404, "No prediction run for this game yet")
     return _predictions[game_id]
+
+
+# ── AI Read (the script-writing helper) ──────────────────────────────
+# Translates an already-locked prediction into on-camera talking
+# points. Never touches the prediction itself — pure read-and-narrate
+# on top of numbers that are already final.
+@app.post("/api/read/{game_id}")
+def generate_read(game_id: str, regenerate: bool = Query(default=False),
+                  customer: cust.Customer = Depends(require_customer)):
+    pred = db.get_prediction(game_id)
+    if not pred:
+        raise HTTPException(404, "Run a prediction before generating a read")
+
+    if pred.get("read_text") and not regenerate:
+        return {"game_id": game_id, "read": pred["read_text"], "cached": True}
+
+    from engine.read_generator import generate_read as _generate_read
+    try:
+        read_text = _generate_read(pred)
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Read generation failed: {e}")
+
+    db.save_read(game_id, read_text)
+    return {"game_id": game_id, "read": read_text, "cached": False}
+
+
+@app.get("/api/read/{game_id}")
+def get_read(game_id: str,
+            customer: cust.Customer = Depends(require_customer)):
+    read_text = db.get_read(game_id)
+    if read_text is None:
+        raise HTTPException(404, "No prediction for this game yet")
+    if not read_text:
+        raise HTTPException(404, "Prediction exists but no read has "
+                                 "been generated yet — POST to this "
+                                 "endpoint first")
+    return {"game_id": game_id, "read": read_text}
 
 
 # ── Settling (the credibility engine) ────────────────────────────────

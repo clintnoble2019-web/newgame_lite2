@@ -517,7 +517,9 @@ function renderPrediction(gameId, p, settled) {
       · Generated: ${p.generated_at}</div>
     <div style="margin-top:12px">
       <button class="settle" onclick="settleGame('${gameId}')">Settle (fetch final)</button>
+      <button class="settle" onclick="generateRead('${gameId}')" style="margin-left:8px">Generate Read</button>
     </div>
+    <div id="read-${cssId(gameId)}"></div>
     <div id="settled-${cssId(gameId)}"></div>`;
 
   if (settled) renderSettled(gameId, settled);
@@ -531,6 +533,30 @@ async function settleGame(gameId) {
     renderSettled(gameId, s);
     loadAccuracy();
   } catch (e) { alert('Settle failed: ' + e.message); }
+}
+
+// ── AI read (script-writing helper) ────────────────────────────
+async function generateRead(gameId, regenerate) {
+  const el = document.getElementById('read-' + cssId(gameId));
+  el.innerHTML = `<div class="simmeta">Generating read...</div>`;
+  try {
+    const qs = regenerate ? '?regenerate=true' : '';
+    const r = await apiFetch(`/api/read/${gameId}${qs}`, { method: 'POST' });
+    renderRead(gameId, r);
+  } catch (e) {
+    el.innerHTML = `<div class="settled bad">Read failed: ${e.message}</div>`;
+  }
+}
+
+function renderRead(gameId, r) {
+  const el = document.getElementById('read-' + cssId(gameId));
+  el.innerHTML = `
+    <div class="settled" style="white-space:pre-wrap">
+      <strong>READ</strong> ${r.cached ? '(cached)' : '(just generated)'}<br>
+      ${r.read}<br>
+      <button class="settle" style="margin-top:8px"
+        onclick="generateRead('${gameId}', true)">Regenerate</button>
+    </div>`;
 }
 
 // Map a "home"/"away" side marker to the real team name. Falls back
