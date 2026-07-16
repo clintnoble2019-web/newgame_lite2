@@ -171,6 +171,16 @@ def init_db() -> None:
             except sqlite3.OperationalError:
                 pass   # column already exists
 
+        # Migration: read_text added 2026-07-16 — caches the AI-generated
+        # natural-language "read" of a locked prediction (the on-camera
+        # talking-point version). Empty string = not generated yet.
+        # Nullable-with-default, same safe additive pattern as above.
+        try:
+            conn.execute("ALTER TABLE predictions ADD COLUMN "
+                         "read_text TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass   # column already exists
+
     # WNBA migration runs on its own connection (needs foreign_keys OFF
     # for the table rebuild — get_conn() forces it ON).
     _migrate_sport_check()
@@ -370,6 +380,33 @@ def get_prediction(game_id: str) -> dict | None:
     d["player_projections"] = json.loads(d["player_projections"])
     d["pitching_matchup"] = json.loads(d.get("pitching_matchup") or "{}")
     return d
+
+
+def save_read(game_id: str, read_text: str) -> None:
+    """Cache the AI-generated read for a game. Only ever updates the
+    read_text column — never touches the locked prediction fields, so
+    generating (or regenerating) a read can't accidentally drift the
+    graded prediction it's describing."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE predictions SET read_text = ? WHERE game_id = ?",
+            (read_text, game_id),
+        )
+
+
+def get_read(game_id: str) -> str | None:
+    """Returns the cached read text, '' if a prediction exists but no
+    read's been generated yet, or None if there's no prediction at all
+    for this game_id (caller should treat that as 'run a prediction
+    first', not 'read failed')."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT read_text FROM predictions WHERE game_id = ?",
+            (game_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return row["read_text"]
 
 
 def get_unsettled_predictions(sport: str = None) -> list[dict]:

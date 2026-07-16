@@ -27,6 +27,16 @@ MSF_SEASON = "2026-regular"
 BDL_API_KEY = os.environ.get("BDL_API_KEY", "")
 BDL_SEASON = 2026   # int, not string — BallDontLie uses bare year
 
+# ── AI Read Generation (added 2026-07-16) ────────────────────────────
+# Translates a stored SimulationOutput into a short natural-language
+# "read" — the on-camera talking-point version of the numbers, used
+# for the daily pick videos. Generated once per game, cached in the
+# predictions table (read_text column) — never regenerated on repeat
+# views, since the underlying prediction is locked once stored.
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+READ_MODEL = "claude-haiku-4-5-20251001"   # fluent translation task,
+                                           # doesn't need heavy reasoning
+
 # ── Simulation (LOCKED decisions — FDD v1.1) ─────────────────────────
 SIMULATION_RUNS = 10_000        # locked: 10k, not 1k
 
