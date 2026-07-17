@@ -2,10 +2,11 @@
 NexGame Lite — Aggregation Layer
 Kage Software · 2026
 
-Runs SIMULATION_RUNS iterations and aggregates (LOCKED):
+Runs SIMULATION_RUNS iterations and aggregates:
     - Win % = raw iteration count
-    - Score range = trim 2.5% each tail -> 9,500-result window
-      (low = 5th pctile, median = 50th, high = 95th)
+    - Score range = LOW trimmed at TRIM_PCT (config.py — currently 30%,
+      so low = 30th percentile). HIGH = true simulated max, untrimmed
+      (changed 2026-07-17 — see _trimmed docstring for why).
     - Player totals = mean across all iterations
     - Confidence signal derived from range width
 """
@@ -20,12 +21,41 @@ from engine.cs2_sim import simulate_cs2_match
 
 
 def _trimmed(scores: list[int]) -> tuple[int, int, int]:
-    """Sort, trim TRIM_PCT from each tail, return (low, median, high).
-    Trim scales with actual run count (tests may use fewer runs)."""
+    """Sort, trim TRIM_PCT from EACH tail, return (low, median, high).
+    Symmetric — used for margin-CONFIDENCE classification only (how
+    tight/wide the projected margin is), not for the displayed/graded
+    score range. See _trimmed_range for that."""
     s = sorted(scores)
     t = int(len(s) * config.TRIM_PCT)
     window = s[t:-t] if t else s
     return window[0], window[len(window) // 2], window[-1]
+
+
+def _trimmed_range(scores: list[int]) -> tuple[int, int, int]:
+    """Sort, trim TRIM_PCT off the LOW tail only. HIGH = true simulated
+    max, untrimmed. Used for the displayed/graded score_low/score_high —
+    NOT the same as _trimmed (margin confidence), which stays symmetric
+    on purpose (see that docstring).
+
+    CHANGED 2026-07-17 per Clint: the previous symmetric 30% trim (30th-
+    70th percentile band) capped score_high well below what the model's
+    own simulations actually produced. Any real blowout — a big inning,
+    a big quarter — landed above that artificially low ceiling, so
+    score_range_correct graded FALSE even when the outcome was squarely
+    within what the model itself simulated 10,000 times. The range was
+    failing on real variance the model already accounted for, just
+    never displayed.
+
+    Low end is untouched (still trimmed at TRIM_PCT) — a per-team score
+    has a hard floor at 0, so the low tail isn't hiding real blowout
+    risk the way the high tail was; it's mostly simulation noise near
+    the bottom, which the existing trim already handles correctly."""
+    s = sorted(scores)
+    t = int(len(s) * config.TRIM_PCT)
+    low = s[t] if t else s[0]
+    high = s[-1]              # true max — no upper trim
+    median = s[len(s) // 2]
+    return low, median, high
 
 
 def _margin_confidence(range_width: int, sport: Sport) -> str:
@@ -88,9 +118,10 @@ def run_simulation(context: GameContext,
     home_wins = sum(1 for r in results if r.winner == "home")
     home_pct = round(home_wins / runs * 100, 1)
 
-    # trimmed score ranges
-    lo_h, med_h, hi_h = _trimmed([r.home_score for r in results])
-    lo_a, med_a, hi_a = _trimmed([r.away_score for r in results])
+    # trimmed score ranges (LOW trimmed, HIGH = true max — see
+    # _trimmed_range docstring for why these aren't symmetric)
+    lo_h, med_h, hi_h = _trimmed_range([r.home_score for r in results])
+    lo_a, med_a, hi_a = _trimmed_range([r.away_score for r in results])
 
     # player projections: mean per stat across iterations that included
     # them, PLUS conversion percentages — the % of simulations in which
