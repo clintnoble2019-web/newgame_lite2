@@ -45,6 +45,22 @@ TRIM_PCT = 0.30                 # narrowed 2026-07-10: 2.5% (95% CI) read
                                  # range for customers. 30% trim keeps
                                  # a 40%-window band (30th-70th pctile),
                                  # tight and genuinely predictive.
+                                 # Still used for: LOW end of the score
+                                 # range, and margin-confidence badge
+                                 # classification (both tails).
+
+TRIM_PCT_HIGH = 0.025            # ADDED 2026-07-17: separate, looser
+                                 # trim for the HIGH end of the
+                                 # displayed/graded score range only.
+                                 # True max (0% trim) proved too wide in
+                                 # practice — a single 1-in-10,000 outlier
+                                 # sim set the ceiling. This restores the
+                                 # ORIGINAL locked 2.5%/97.5th-percentile
+                                 # value (the "2.5% (95% CI)" this file
+                                 # already referenced above) for the
+                                 # upper bound specifically, while the
+                                 # 30% narrowing above stays in effect
+                                 # for the low end and the margin badge.
 TRIM_COUNT = int(SIMULATION_RUNS * TRIM_PCT)
 
 # ── Player data sufficiency (LOCKED) ─────────────────────────────────

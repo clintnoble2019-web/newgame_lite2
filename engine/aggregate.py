@@ -32,28 +32,31 @@ def _trimmed(scores: list[int]) -> tuple[int, int, int]:
 
 
 def _trimmed_range(scores: list[int]) -> tuple[int, int, int]:
-    """Sort, trim TRIM_PCT off the LOW tail only. HIGH = true simulated
-    max, untrimmed. Used for the displayed/graded score_low/score_high —
-    NOT the same as _trimmed (margin confidence), which stays symmetric
-    on purpose (see that docstring).
+    """Sort, trim TRIM_PCT off the LOW tail, TRIM_PCT_HIGH off the HIGH
+    tail — two DIFFERENT trim amounts, not symmetric. Used for the
+    displayed/graded score_low/score_high — NOT the same as _trimmed
+    (margin confidence), which stays symmetric at TRIM_PCT on purpose
+    (see that docstring).
 
-    CHANGED 2026-07-17 per Clint: the previous symmetric 30% trim (30th-
-    70th percentile band) capped score_high well below what the model's
-    own simulations actually produced. Any real blowout — a big inning,
-    a big quarter — landed above that artificially low ceiling, so
-    score_range_correct graded FALSE even when the outcome was squarely
-    within what the model itself simulated 10,000 times. The range was
-    failing on real variance the model already accounted for, just
-    never displayed.
+    CHANGED 2026-07-17 per Clint (two iterations):
+    1st: removed the upper trim entirely (true max) — the previous
+    symmetric 30% trim (30th-70th percentile band) capped score_high
+    well below what the model's own simulations actually produced, so
+    real blowouts graded score_range_correct=FALSE despite being
+    outcomes the model itself simulated.
+    2nd: true max proved too wide the other direction — a single rare
+    outlier simulation set the ceiling, producing ranges like 1-19.
+    Settled on TRIM_PCT_HIGH (2.5%) for the high end — the ORIGINAL
+    locked design value from before the 2026-07-10 narrowing, giving a
+    97.5th-percentile ceiling: wide enough to catch real blowouts,
+    tight enough not to be set by one-in-thousands noise.
 
-    Low end is untouched (still trimmed at TRIM_PCT) — a per-team score
-    has a hard floor at 0, so the low tail isn't hiding real blowout
-    risk the way the high tail was; it's mostly simulation noise near
-    the bottom, which the existing trim already handles correctly."""
+    Low end unchanged — still trimmed at the wider TRIM_PCT (30%)."""
     s = sorted(scores)
-    t = int(len(s) * config.TRIM_PCT)
-    low = s[t] if t else s[0]
-    high = s[-1]              # true max — no upper trim
+    t_low = int(len(s) * config.TRIM_PCT)
+    t_high = int(len(s) * config.TRIM_PCT_HIGH)
+    low = s[t_low] if t_low else s[0]
+    high = s[-(t_high + 1)] if t_high else s[-1]
     median = s[len(s) // 2]
     return low, median, high
 
