@@ -289,13 +289,21 @@ def get_read(game_id: str,
 def settle(game_id: str, sport: str = Query(...),
           customer: cust.Customer = Depends(require_customer)):
     sp = _sport(sport)
-    payload = _predictions.get(game_id)
-    if not payload:
+
+    # BUG FIX (2026-07-16): this used to read _predictions.get(game_id) —
+    # the in-memory dict, which is wiped on every server restart/redeploy.
+    # A prediction made earlier the same day would 404 here as soon as
+    # ANY redeploy happened in between (confirmed root cause of "today's
+    # MLB game won't settle" — this app deploys multiple times a day).
+    # Same DB-backed fix already applied to /api/games (see the comment
+    # there) and already correctly used by the scheduler's settle_job —
+    # this endpoint was just never brought in line with those two.
+    stored = db.get_prediction(game_id)
+    if not stored:
         raise HTTPException(404, "Run a prediction before settling")
 
-    # rebuild SimulationOutput from cached payload
-    from models import SimulationOutput
-    pred = SimulationOutput(**{**payload, "sport": sp})
+    from nexgame_scheduler import _row_to_simulation_output
+    pred = _row_to_simulation_output(stored)
 
     try:
         box = provider.get_final_boxscore(game_id, sp)
@@ -318,7 +326,10 @@ def settle(game_id: str, sport: str = Query(...),
             f"then settle again.")
 
     result = settle_game(pred, box)
-    db.save_settle(result)
+    # home_team/away_team denormalized onto the settle row itself —
+    # see save_settle / the settles table migration comment. Fixes the
+    # "Recent Settled Games" list silently dropping entries.
+    db.save_settle(result, home_team=pred.home_team, away_team=pred.away_team)
 
     out = asdict(result)
     out["player_results"] = [asdict(r) for r in result.player_results]
@@ -335,7 +346,10 @@ def accuracy(sport: str = Query(default=None)):
     return {
         "overall": overall,
         "by_sport": by_sport,
-        "recent": db.get_recent_settles(limit=10, sport=sport),
+        # Raised from 10 to 500 (2026-07-16) — this is the public
+        # "history of settled games," not a small preview. 500
+        # comfortably covers realistic volume for a long while.
+        "recent": db.get_recent_settles(limit=500, sport=sport),
         "provider": config.DATA_PROVIDER,
         "simulations_per_game": config.SIMULATION_RUNS,
     }

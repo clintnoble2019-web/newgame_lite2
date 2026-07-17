@@ -181,6 +181,23 @@ def init_db() -> None:
         except sqlite3.OperationalError:
             pass   # column already exists
 
+        # Migration: settles.home_team / settles.away_team added
+        # 2026-07-16. BUG FOUND: get_recent_settles() previously required
+        # an INNER JOIN to predictions to get team names, which meant a
+        # settled game could silently vanish from the public "settled
+        # games" history if its predictions row was ever missing —
+        # fragile for a feature whose whole point is being a trustworthy
+        # public record. Denormalizing the team names directly onto the
+        # settle row at settle-time removes that dependency entirely.
+        for ddl in (
+            "ALTER TABLE settles ADD COLUMN home_team TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE settles ADD COLUMN away_team TEXT NOT NULL DEFAULT ''",
+        ):
+            try:
+                conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass   # column already exists
+
     # WNBA migration runs on its own connection (needs foreign_keys OFF
     # for the table rebuild — get_conn() forces it ON).
     _migrate_sport_check()
@@ -441,13 +458,20 @@ def get_unsettled_predictions(sport: str = None) -> list[dict]:
 # Settling
 # ---------------------------------------------------------------------------
 
-def save_settle(result) -> None:
+def save_settle(result, home_team: str = "", away_team: str = "") -> None:
     """
     result: models.GameSettleResult
 
     result.sport is already a plain string (see models.py — unlike
     SimulationOutput.sport, which is the enum). result.player_results is
     a list[PlayerSettleResult] dataclasses; serialized to JSON.
+
+    home_team/away_team: denormalized onto the settle row itself
+    (2026-07-16) so the public settled-games history never depends on
+    the predictions row still existing — see the migration comment in
+    init_db. Callers should pass these from the SimulationOutput they
+    already have in hand (pred.home_team / pred.away_team) rather than
+    relying on a join at read time.
     """
     player_results_json = json.dumps([
         asdict(r) if is_dataclass(r) else r for r in result.player_results
@@ -460,8 +484,8 @@ def save_settle(result) -> None:
                 game_id, sport, predicted_winner, actual_winner,
                 win_loss_correct, actual_home, actual_away,
                 score_range_correct, player_results, player_accuracy_pct,
-                settled_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                settled_at, home_team, away_team
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id) DO UPDATE SET
                 predicted_winner = excluded.predicted_winner,
                 actual_winner = excluded.actual_winner,
@@ -471,13 +495,15 @@ def save_settle(result) -> None:
                 score_range_correct = excluded.score_range_correct,
                 player_results = excluded.player_results,
                 player_accuracy_pct = excluded.player_accuracy_pct,
-                settled_at = excluded.settled_at
+                settled_at = excluded.settled_at,
+                home_team = excluded.home_team,
+                away_team = excluded.away_team
             """,
             (
                 result.game_id, result.sport, result.predicted_winner, result.actual_winner,
                 int(result.win_loss_correct), result.actual_home, result.actual_away,
                 int(result.score_range_correct), player_results_json, result.player_accuracy_pct,
-                result.settled_at,
+                result.settled_at, home_team, away_team,
             ),
         )
 
@@ -543,26 +569,38 @@ def get_accuracy_summary(sport: str = None) -> dict:
     }
 
 
-def get_recent_settles(limit: int = 10, sport: str = None) -> list[dict]:
-    """Matches main.py: db.get_recent_settles(limit=10).
+def get_recent_settles(limit: int = 500, sport: str = None) -> list[dict]:
+    """Matches main.py: db.get_recent_settles(limit=500).
 
-    JOINs predictions for home_team/away_team — the settles table only
-    stores actual_home/actual_away scores, not team names, so without
-    the join the frontend's `${s.home_team} @ ${s.away_team}` read
-    undefined off every row ("undefined @ undefined" on the Accuracy tab).
+    BUG FIX (2026-07-16): previously used an INNER JOIN to predictions
+    for home_team/away_team, since settles didn't store them directly.
+    That meant ANY settled game whose predictions row was missing —
+    for any reason — silently vanished from this list entirely, even
+    though get_accuracy_summary() (which queries settles alone, no
+    join) still counted it in the headline percentages. That mismatch
+    is exactly what caused the public dashboard to show real win/loss
+    stats while "Recent Settled Games" showed none.
 
-    CS2 excluded unconditionally (2026-07-14) — same reasoning as
-    get_accuracy_summary's blended number: this feed is part of the
-    public accuracy dashboard, and CS2's roster volatility makes it a
-    different reliability signal than the other sports. CS2 results
-    still show on Games tab cards. The optional `sport` param (added
-    for the Accuracy tab's per-sport dropdown) narrows further to one
-    of MLB/NBA/WNBA on top of that — passing sport='CS2' here would
-    just return zero rows, not bypass the exclusion."""
+    Fixed by denormalizing home_team/away_team onto the settles row at
+    settle-time (see save_settle). This now LEFT JOINs only as a
+    fallback for old rows settled before the denormalization existed —
+    COALESCE prefers the settle row's own team names first, so a
+    missing predictions row can never make a settled game disappear
+    from its own history again.
+
+    Default limit raised from 10 to 500 — this feed is the public
+    "history of settled games," not a small preview, and 500 comfortably
+    covers realistic volume for a long while without needing pagination.
+    """
     query = """
-        SELECT s.*, p.home_team AS home_team, p.away_team AS away_team
+        SELECT s.id, s.game_id, s.sport, s.predicted_winner, s.actual_winner,
+               s.win_loss_correct, s.actual_home, s.actual_away,
+               s.score_range_correct, s.player_results, s.player_accuracy_pct,
+               s.settled_at,
+               COALESCE(NULLIF(s.home_team, ''), p.home_team) AS home_team,
+               COALESCE(NULLIF(s.away_team, ''), p.away_team) AS away_team
         FROM settles s
-        JOIN predictions p ON p.game_id = s.game_id
+        LEFT JOIN predictions p ON p.game_id = s.game_id
         WHERE s.sport != 'CS2'
     """
     params = []

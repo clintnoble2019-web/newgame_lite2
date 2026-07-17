@@ -212,7 +212,7 @@ def settle_job():
             try:
                 pred = _row_to_simulation_output(row)
                 result = settle_game(pred, box)
-                db.save_settle(result)
+                db.save_settle(result, home_team=pred.home_team, away_team=pred.away_team)
                 logger.info(
                     "Settled %s -- win/loss %s",
                     game_id, "HIT" if result.win_loss_correct else "MISS",
