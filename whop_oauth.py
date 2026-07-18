@@ -43,6 +43,7 @@ import json
 import secrets
 import time
 import uuid
+from urllib.parse import urlencode
 
 import requests
 from fastapi import APIRouter, Request, Response, HTTPException
@@ -113,16 +114,20 @@ def whop_oauth_start(response: Response):
     challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
     state = _b64url(secrets.token_bytes(16))
 
-    redirect = RedirectResponse(
-        f"{AUTHORIZE_URL}"
-        f"?response_type=code"
-        f"&client_id={config.WHOP_CLIENT_ID}"
-        f"&redirect_uri={config.WHOP_OAUTH_REDIRECT_URI}"
-        f"&scope=openid%20profile%20email"
-        f"&state={state}"
-        f"&code_challenge={challenge}"
-        f"&code_challenge_method=S256"
-    )
+    # Properly URL-encoded via urlencode rather than raw f-string
+    # interpolation — some OAuth servers are strict about redirect_uri
+    # in particular arriving percent-encoded (its own '://' and '/'
+    # characters can otherwise confuse a strict query-string parser).
+    params = urlencode({
+        "response_type": "code",
+        "client_id": config.WHOP_CLIENT_ID,
+        "redirect_uri": config.WHOP_OAUTH_REDIRECT_URI,
+        "scope": "openid profile email",
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+    })
+    redirect = RedirectResponse(f"{AUTHORIZE_URL}?{params}")
     redirect.set_cookie(
         PKCE_COOKIE_NAME, _sign_pkce_payload(verifier, state),
         httponly=True, max_age=PKCE_COOKIE_TTL_SECONDS, samesite="lax",
@@ -132,7 +137,7 @@ def whop_oauth_start(response: Response):
 
 @router.get("/api/auth/callback/whop")
 def whop_oauth_callback(request: Request, code: str = "", state: str = "",
-                        error: str = ""):
+                        error: str = "", error_description: str = ""):
     """Step 2: Whop sends the customer back here. Exchange the code for
     a token (JSON POST, no client_secret — PKCE's code_verifier is what
     proves this request came from the same client that started the
@@ -141,7 +146,10 @@ def whop_oauth_callback(request: Request, code: str = "", state: str = "",
     NexGame Lite customer record by email, and log them in exactly like
     /api/login does today."""
     if error:
-        raise HTTPException(400, f"Whop declined: {error}")
+        detail = f"Whop declined: {error}"
+        if error_description:
+            detail += f" — {error_description}"
+        raise HTTPException(400, detail)
 
     pkce_cookie = request.cookies.get(PKCE_COOKIE_NAME, "")
     pkce = _verify_pkce_payload(pkce_cookie)
