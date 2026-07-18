@@ -118,10 +118,6 @@
                      font-size: .68rem; font-weight: 700; margin-left: 6px; }
   .pitcher-box .tag.confirmed { background: #003a22; color: var(--green); }
   .pitcher-box .tag.rotation { background: #3a3200; color: var(--gold); }
-  .pitcher-box .tag.bullpen { background: #1a1a3a; color: #8899ff; }
-  .pitcher-box .bullpen-label { margin-top: 10px; padding-top: 8px;
-                                border-top: 1px solid var(--border);
-                                font-size: .9rem; }
 
   table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: .85rem; }
   th { color: var(--accent); text-align: left; padding: 6px 10px;
@@ -211,7 +207,7 @@
     <div id="ticker"><span class="loading">Loading live feed…</span></div>
 
     <div class="controls">
-      <select id="sport" onchange="loadGames()">
+      <select id="sport" onchange="loadGames(); loadTicker();">
         <option value="MLB">⚾ MLB</option>
         <option value="NBA">🏀 NBA</option>
         <option value="WNBA">🏀 WNBA</option>
@@ -298,9 +294,17 @@ async function apiFetch(url, opts) {
 let liveByGame = {};
 
 async function loadTicker() {
+  const el = document.getElementById('ticker');
+  // BUG FIX (2026-07-18): previously only the initial static HTML had a
+  // "Loading live feed…" placeholder — every SUBSEQUENT refresh (sport
+  // change, the 60s poll) left the ticker's old content untouched until
+  // the new fetch resolved. If a fetch was slow, or the sport switch
+  // meant the ticker was showing the WRONG sport's games in the
+  // meantime, that read as broken/blank. Now every refresh explicitly
+  // shows the loading label first, same as the initial page load.
+  el.innerHTML = '<span class="loading">Loading live feed…</span>';
   try {
     const data = await apiFetch(`/api/live/${sport()}`);
-    const el = document.getElementById('ticker');
     liveByGame = {};
     data.forEach(g => { liveByGame[g.game_id] = g; });
     if (!data.length) { el.innerHTML = '<span class="loading">No games on the board.</span>'; return; }
@@ -423,10 +427,6 @@ function renderPrediction(gameId, p, settled) {
   const pm = p.pitching_matchup || {};
   let matchupHtml = '';
   if (pm.home && pm.away) {
-    // NOTE: the "95 pitches" in the bullpen tooltip below is a display
-    // string, not read from config — keep it in sync with
-    // config.PITCH_COUNT_PULL (engine/mlb_sim.py's actual pull
-    // threshold) by hand if that value ever changes.
     const box = (side, label) => `
       <div class="pitcher-box">
         <div class="team">${label}</div>
@@ -438,11 +438,6 @@ function renderPrediction(gameId, p, settled) {
             ${side.confirmed ? 'CONFIRMED SP' : 'ROTATION AVG'}</span>
         </div>
         <div class="pstats">ERA ${side.era} · WHIP ${side.whip} · K/9 ${side.k_per_9}</div>
-        ${side.bullpen ? `
-        <div class="pname bullpen-label">Bullpen
-          <span class="tag bullpen" title="Modeled on this team's actual relief corps — takes over once the starter crosses ${95} pitches">TAKES OVER @ 95 PITCHES</span>
-        </div>
-        <div class="pstats">ERA ${side.bullpen.era} · WHIP ${side.bullpen.whip} · K/9 ${side.bullpen.k_per_9}</div>` : ''}
       </div>`;
     matchupHtml = `
       <div class="section-title" style="margin-top:14px">Pitching Matchup</div>
@@ -491,20 +486,14 @@ function renderPrediction(gameId, p, settled) {
   el.innerHTML = `
     <div class="winbar-wrap">
       <div class="winbar">
-        <div class="away" style="width:${p.away_win_pct}%"></div>
         <div class="home" style="width:${p.home_win_pct}%"></div>
+        <div class="away" style="width:${p.away_win_pct}%"></div>
       </div>
       <div class="winlabels">
-        <span>${p.away_team} ${p.away_win_pct}%</span>
-        <span class="badge ${p.win_confidence || 'toss_up'}" title="How lopsided the win probability is">${winLabel}</span>
         <span>${p.home_team} ${p.home_win_pct}%</span>
+        <span class="badge ${p.win_confidence || 'toss_up'}" title="How lopsided the win probability is">${winLabel}</span>
+        <span>${p.away_team} ${p.away_win_pct}%</span>
       </div>
-      ${p.kalshi_event_ticker ? `
-      <div class="winlabels" style="margin-top:2px;color:var(--dim);font-size:.78rem" title="Kalshi's real-money market-implied probability (yes_bid+yes_ask midpoint)">
-        <span>Kalshi ${p.kalshi_away_prob}%</span>
-        <span></span>
-        <span>Kalshi ${p.kalshi_home_prob}%</span>
-      </div>` : ''}
     </div>
     ${matchupHtml}
     <div class="section-title" style="margin-top:14px">Predicted Score (Median)
@@ -512,14 +501,14 @@ function renderPrediction(gameId, p, settled) {
     </div>
     <div class="ranges">
       <div class="range-box">
-        <div class="team">${p.away_team}</div>
-        <div class="val">${p.score_med_away}</div>
-        <div class="med">range ${p.score_low_away} – ${p.score_high_away}</div>
-      </div>
-      <div class="range-box">
         <div class="team">${p.home_team}</div>
         <div class="val">${p.score_med_home}</div>
         <div class="med">range ${p.score_low_home} – ${p.score_high_home}</div>
+      </div>
+      <div class="range-box">
+        <div class="team">${p.away_team}</div>
+        <div class="val">${p.score_med_away}</div>
+        <div class="med">range ${p.score_low_away} – ${p.score_high_away}</div>
       </div>
     </div>
     <table>
