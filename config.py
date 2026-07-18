@@ -104,10 +104,6 @@ LEAGUE_AVG_OBP = 0.320
 LEAGUE_AVG_WHIP = 1.30
 LEAGUE_AVG_ERA = 4.20
 PITCH_COUNT_PULL = 95           # starter pulled around this pitch count
-MLB_BULLPEN_SAMPLE_MAX = 10     # cap on relievers sampled per team when
-                                 # hydrating real bullpen ERA/WHIP/K9 —
-                                 # bounds the extra season_stats calls
-                                 # per prediction (see _hydrate_bullpen_stats)
 PITCHES_PER_PA = 3.9            # league average pitches per plate appearance
 
 # Hit type distribution baseline (tuned by player SLG in engine)
@@ -165,39 +161,18 @@ DB_PATH = os.environ.get("DB_PATH", "nexgame_lite.db")
 LIVE_POLL_SECONDS = 60          # live score ticker refresh
 TOP_PLAYERS_SHOWN = 5           # top N players per team in prediction view
 
-# ── Gumroad (B2C billing) ─────────────────────────────────────────────
-# HMAC secret Gumroad signs webhook pings with — set once you configure
-# the Ping endpoint in Gumroad Settings > Advanced.
-GUMROAD_WEBHOOK_SECRET = ""
+# ── Whop (B2C billing) ─────────────────────────────────────────────────
+# REPLACES Gumroad entirely (2026-07-18). Standard Webhooks secret Whop
+# shows you ONCE at webhook creation (Dashboard > Developer > Create
+# Webhook) — format is "whsec_xxxxx". Copy it here immediately, it's
+# not re-shown later (you'd have to roll it and update every consumer).
+WHOP_WEBHOOK_SECRET = ""
 
-# ── Whop (B2C billing, second checkout path alongside Gumroad) ────────
-# Signing secret from the Whop dashboard: Developer tab > Create Webhook.
-# Whop signs webhooks per the Standard Webhooks spec, NOT Gumroad's
-# raw-HMAC scheme — see whop_webhook.py for the verification difference.
-# Works identically whether the sale came from Whop's own Discover
-# marketplace or an embedded checkout on nexgamelite.com itself.
-WHOP_WEBHOOK_SECRET = os.environ.get("WHOP_WEBHOOK_SECRET", "")
-
-# ── Whop OAuth ("Sign in with Whop") ───────────────────────────────────
-# From dash.whop.com/settings/developer > Apps > [your app] > OAuth tab.
-# Pulled from environment variables, NOT hardcoded — same pattern as
-# BDL_API_KEY/ANTHROPIC_API_KEY/SECRET_KEY above. Set these in Railway's
-# Variables tab, not in this file, so the real values never end up in
-# a git commit or this repo's zip export.
-WHOP_CLIENT_ID = os.environ.get("WHOP_CLIENT_ID", "")
-WHOP_CLIENT_SECRET = os.environ.get("WHOP_CLIENT_SECRET", "")
-# Must exactly match a redirect URI registered in that same OAuth tab —
-# including https:// and no trailing slash.
-WHOP_OAUTH_REDIRECT_URI = os.environ.get(
-    "WHOP_OAUTH_REDIRECT_URI",
-    "https://nexgamelite.com/api/auth/callback/whop")
-# Company API key (Developer tab > Company API Keys) — used server-side
-# to check whether the logged-in user actually holds a paid membership,
-# separate from the OAuth client credentials above.
-WHOP_API_KEY = os.environ.get("WHOP_API_KEY", "")
-# The specific product/plan (access pass) ID NexGame Lite sells on Whop —
-# found on that product's page in your dashboard.
-WHOP_ACCESS_PASS_ID = os.environ.get("WHOP_ACCESS_PASS_ID", "")
+# The Whop product page URL — a single URL that hosts all three
+# billing intervals (monthly / 6-month / annual). Whop's own page
+# shows the tier picker; visitors choose the interval on Whop's side,
+# not ours. Trials are configured per-plan on Whop's dashboard.
+WHOP_PRODUCT_URL = "https://whop.com/nexgame-lite/nexgame-lite-44"
 
 # ── Auth ─────────────────────────────────────────────────────────────
 # Signs session cookies. MUST be set to a real random value before
