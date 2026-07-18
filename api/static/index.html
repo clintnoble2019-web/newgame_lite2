@@ -249,15 +249,14 @@
 <div id="modal-root"></div>
 
 <script>
-// Whop pixel: catches the OAuth login path (whop_oauth.py redirects
-// here with ?new_signup=1 on a customer's genuine first-ever login —
-// see customers.mark_first_login for why login, not purchase, is the
-// trackable moment). Fires once, then strips the param via
-// history.replaceState so a refresh or bookmark doesn't re-fire it.
-if (window.whop && new URLSearchParams(location.search).get('new_signup') === '1') {
-  whop.track('complete_registration');
-  history.replaceState({}, '', location.pathname);
-}
+// Whop pixel: strip the ?new_signup=1 marker from the URL right away
+// (history.replaceState) so a refresh/bookmark doesn't leave it
+// sitting there — the actual whop.track('complete_registration') call
+// happens in loadAccountInfo() below, once /api/me resolves, so it
+// can carry the customer's email/name for identification (see that
+// function for why this couldn't fire here with no identity yet).
+const _isNewSignup = new URLSearchParams(location.search).get('new_signup') === '1';
+if (_isNewSignup) { history.replaceState({}, '', location.pathname); }
 
 const LIVE_POLL_MS = 60000;
 let liveTimer = null;
@@ -735,6 +734,22 @@ async function loadAccountInfo() {
     const me = await r.json();
     document.getElementById('account-info').textContent =
       `${me.name} · ${me.tier}`;
+
+    // Whop pixel identification: Whop has no separate identify() call —
+    // per docs.whop.com/developer/guides/pixel, attaching customer
+    // fields (email, name, etc.) to ANY track() call is how a visitor
+    // gets matched to a real person. This is the first point on this
+    // page where that identity is actually known (the base pixel
+    // script in <head> fires before this fetch resolves, so it can't
+    // carry it). Re-using 'pixel' here (rather than firing another
+    // 'page' and inflating that pageview count) since 'pixel' is
+    // already a required, non-funnel-specific event.
+    if (window.whop) {
+      whop.track('pixel', { email: me.email, name: me.name });
+      if (_isNewSignup) {
+        whop.track('complete_registration', { email: me.email, name: me.name });
+      }
+    }
   } catch (e) { /* non-fatal */ }
 }
 

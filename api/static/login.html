@@ -118,7 +118,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     if (r.ok) {
       const data = await r.json();
       if (window.whop && data.is_new_signup) {
-        whop.track('complete_registration');
+        whop.track('complete_registration', { email: email, name: data.name });
       }
       window.location.href = '/';
     } else {
