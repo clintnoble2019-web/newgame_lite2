@@ -168,15 +168,11 @@ TOP_PLAYERS_SHOWN = 5           # top N players per team in prediction view
 # not re-shown later (you'd have to roll it and update every consumer).
 WHOP_WEBHOOK_SECRET = ""
 
-# The checkout links for each billing interval (7-day free trial
-# configured on the monthly plan itself in Whop's dashboard, not
-# passed as a URL param — confirm at launch whether it's monthly-only
-# or applies to all three). Create at: Whop Dashboard > Checkout
-# Links > + Create Checkout Link, one per plan. Used by the landing
-# page's three pricing cards.
-WHOP_CHECKOUT_URL_MONTHLY = ""      # $39.99/mo
-WHOP_CHECKOUT_URL_SEMIANNUAL = ""   # $199.99 / 6 months
-WHOP_CHECKOUT_URL_ANNUAL = ""       # $399.99 / year
+# The Whop product page URL — a single URL that hosts all three
+# billing intervals (monthly / 6-month / annual). Whop's own page
+# shows the tier picker; visitors choose the interval on Whop's side,
+# not ours. Trials are configured per-plan on Whop's dashboard.
+WHOP_PRODUCT_URL = "https://whop.com/nexgame-lite/nexgame-lite-44"
 
 # ── Auth ─────────────────────────────────────────────────────────────
 # Signs session cookies. MUST be set to a real random value before

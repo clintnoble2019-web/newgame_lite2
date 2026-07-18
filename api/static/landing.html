@@ -44,19 +44,10 @@
   .feature h3 { color: #fff; font-size: 16px; margin-bottom: 8px; }
   .feature p { font-size: 14px; color: var(--dim); }
 
-  .pricing { padding-bottom: 80px; }
-  .pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-  .plan { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 32px 24px; text-align: center; position: relative; }
-  .plan.featured { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-  .plan .tag { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #041014; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 20px; letter-spacing: 0.5px; }
-  .plan h3 { color: #fff; font-size: 16px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .plan .price { font-size: 36px; font-weight: 700; color: #fff; }
-  .plan .price span { font-size: 14px; color: var(--dim); font-weight: 400; }
-  .plan .save { font-size: 13px; color: var(--green); margin-top: 6px; min-height: 18px; }
-  .plan .trial-note { font-size: 12px; color: var(--gold); margin: 12px 0; min-height: 16px; }
-  .plan a { display: block; background: var(--border); color: #fff; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: 600; margin-top: 16px; }
-  .plan.featured a { background: var(--accent); color: #041014; }
-  .plan a:hover { opacity: 0.9; }
+  .cta-block { text-align: center; padding: 20px 0 80px; }
+  .cta-block h2 { color: #fff; font-size: 26px; margin-bottom: 8px; }
+  .cta-block .price-line { color: var(--dim); font-size: 15px; margin-bottom: 24px; }
+  .cta-block .price-line b { color: var(--text); font-weight: 600; }
 
   footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; font-size: 12px; color: var(--dim); }
 </style>
@@ -72,7 +63,7 @@
   <div class="hero">
     <h1>Monte Carlo predictions.<br><span>10,000 simulations</span> per game.</h1>
     <p>MLB, NBA, WNBA, and CS2 predictions built on real simulation, not gut feel — with a public, auditable accuracy record you can check before you ever pay for anything.</p>
-    <a href="#pricing" class="cta-primary">Start Your 7-Day Free Trial</a>
+    <a href="https://whop.com/nexgame-lite/nexgame-lite-44" class="cta-primary" target="_blank" rel="noopener">Start Your 7-Day Free Trial</a>
     <div class="cta-sub">No charge until day 8. Cancel anytime.</div>
   </div>
 
@@ -101,33 +92,11 @@
     </div>
   </div>
 
-  <div class="pricing" id="pricing">
-    <div class="section-title">Pick your plan</div>
-    <div class="section-sub">Same access, three ways to pay for it.</div>
-    <div class="pricing-grid">
-      <div class="plan">
-        <h3>Monthly</h3>
-        <div class="price">$39.99<span>/mo</span></div>
-        <div class="save">&nbsp;</div>
-        <div class="trial-note">7-day free trial</div>
-        <a href="#" id="checkout-monthly">Start Free Trial</a>
-      </div>
-      <div class="plan featured">
-        <div class="tag">BEST VALUE</div>
-        <h3>6 Months</h3>
-        <div class="price">$199.99<span>/6mo</span></div>
-        <div class="save">Save $39.95 vs monthly</div>
-        <div class="trial-note">&nbsp;</div>
-        <a href="#" id="checkout-semiannual">Subscribe</a>
-      </div>
-      <div class="plan">
-        <h3>Annual</h3>
-        <div class="price">$399.99<span>/yr</span></div>
-        <div class="save">Save $79.89 vs monthly</div>
-        <div class="trial-note">&nbsp;</div>
-        <a href="#" id="checkout-annual">Subscribe</a>
-      </div>
-    </div>
+  <div class="cta-block" id="pricing">
+    <h2>Ready to see it in action?</h2>
+    <div class="price-line">Starts at <b>$39.98/mo</b>, or save 17% on the 6-month and annual plans &mdash; all include a <b>7-day free trial</b>.</div>
+    <a href="https://whop.com/nexgame-lite/nexgame-lite-44" class="cta-primary" target="_blank" rel="noopener">Get Access</a>
+    <div class="cta-sub">You'll pick your plan on the next screen. Cancel anytime during the trial.</div>
   </div>
 
   <footer>
@@ -136,13 +105,6 @@
 </div>
 
 <script>
-// CHECKOUT LINKS — paste your real Whop checkout links here once
-// created (Whop Dashboard > Checkout Links > + Create Checkout Link,
-// one per plan). Placeholder "#" links do nothing until filled in.
-document.getElementById('checkout-monthly').href = 'PASTE_MONTHLY_CHECKOUT_LINK_HERE';
-document.getElementById('checkout-semiannual').href = 'PASTE_SEMIANNUAL_CHECKOUT_LINK_HERE';
-document.getElementById('checkout-annual').href = 'PASTE_ANNUAL_CHECKOUT_LINK_HERE';
-
 // Live accuracy stats — /api/accuracy is PUBLIC (no login required),
 // same endpoint the logged-in dashboard's Accuracy tab uses.
 fetch('/api/accuracy')

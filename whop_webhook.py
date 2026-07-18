@@ -59,14 +59,17 @@ import customers as cust
 
 router = APIRouter()
 
-# Maps Whop's plan ID -> our Tier enum. FILL THESE IN with the real
-# plan IDs from Whop Dashboard > Products > (your product) > Plans,
-# one per billing interval. Same pattern as the old Gumroad
-# VARIANT_TIER_MAP, just keyed by plan_id instead of variant name —
-# plan_id is a stable field regardless of how Whop's exact interval
-# field is named internally, so this avoids guessing at that.
+# Maps Whop's plan ID -> our Tier enum. The single product URL
+# (whop.com/nexgame-lite/nexgame-lite-44) hosts all three billing
+# intervals on Whop's side, but each still has its own plan_id under
+# the hood — Whop tells us which one the customer picked via this
+# field on the membership webhook payload.
+#
+# FILL THESE IN: get the three plan IDs from Whop Dashboard > Products
+# > NexGame-Lite > Plans (three rows: monthly / 6-month / annual).
+# Unknown plan_ids fall back to MONTHLY (see _tier_from_plan_id).
 PLAN_ID_TIER_MAP = {
-    "PASTE_MONTHLY_PLAN_ID_HERE": cust.Tier.MONTHLY,       # $39.99/mo
+    "PASTE_MONTHLY_PLAN_ID_HERE": cust.Tier.MONTHLY,       # $39.98/mo
     "PASTE_SEMIANNUAL_PLAN_ID_HERE": cust.Tier.SEMIANNUAL, # $199.99/6mo
     "PASTE_ANNUAL_PLAN_ID_HERE": cust.Tier.ANNUAL,         # $399.99/yr
 }

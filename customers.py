@@ -10,7 +10,7 @@ Two completely separate buyer populations, priced deliberately apart
         LIFETIME   -> $900, never expires
 
     B2C — Whop, single product, three billing intervals:
-        MONTHLY    -> $39.99/mo, 7-day free trial
+        MONTHLY    -> $39.98/mo, 7-day free trial
         SEMIANNUAL -> $199.99 / 6 months
         ANNUAL     -> $399.99 / year
 
@@ -66,7 +66,7 @@ class Tier(Enum):
     SEASON = "season"                  # $450
     LIFETIME = "lifetime"              # $900
     # B2C — Whop, one product, three billing intervals
-    MONTHLY = "monthly"                # $39.99/mo, 7-day free trial
+    MONTHLY = "monthly"                # $39.98/mo, 7-day free trial
     SEMIANNUAL = "semiannual"          # $199.99 / 6 months
     ANNUAL = "annual"                  # $399.99 / year
 
@@ -77,7 +77,7 @@ B2C_TIERS = (Tier.MONTHLY, Tier.SEMIANNUAL, Tier.ANNUAL)
 TIER_PRICE = {
     Tier.SEASON: 450.00,
     Tier.LIFETIME: 900.00,
-    Tier.MONTHLY: 39.99,
+    Tier.MONTHLY: 39.98,
     Tier.SEMIANNUAL: 199.99,
     Tier.ANNUAL: 399.99,
 }
