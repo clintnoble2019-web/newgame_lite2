@@ -265,6 +265,19 @@ def get_by_whop_subscription(sub_id: str, path: str = None) -> Customer | None:
     return _row_to_customer(row) if row else None
 
 
+def get_by_email(email: str, path: str = None) -> Customer | None:
+    """Case-insensitive email lookup. Used by whop_oauth.py (Sign in
+    with Whop): Whop's 'check user access' endpoint returns
+    has_access/access_level, not a subscription ID — so OAuth login
+    can't match against whop_subscription_id the way the webhook does.
+    Email is the field both paths reliably share."""
+    with _db(path) as db:
+        row = db.execute(
+            "SELECT * FROM customers WHERE lower(email) = lower(?)",
+            (email.strip(),)).fetchone()
+    return _row_to_customer(row) if row else None
+
+
 def verify_credentials(email: str, license_key: str,
                        path: str = None) -> Customer | None:
     """Login check: email + license_key must both match the same

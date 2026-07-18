@@ -42,6 +42,23 @@
   }
   button:hover { background: #005566; }
   button:disabled { opacity: .5; cursor: wait; }
+  .whop-btn {
+    display: block; text-align: center; text-decoration: none;
+    width: 100%; background: #0A0A0A; color: #FFFFFF;
+    border: 1px solid var(--border); padding: 12px;
+    border-radius: 6px; font-weight: 600; font-size: .95rem;
+    margin-bottom: 18px;
+  }
+  .whop-btn:hover { border-color: #FFFFFF; }
+  .divider {
+    display: flex; align-items: center; color: var(--dim);
+    font-size: .75rem; margin-bottom: 18px; text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+  .divider::before, .divider::after {
+    content: ""; flex: 1; height: 1px; background: var(--border);
+  }
+  .divider span { padding: 0 10px; }
   .error {
     background: #2a0010; color: var(--red); border: 1px solid #5a0020;
     padding: 10px 12px; border-radius: 6px; font-size: .85rem;
@@ -60,6 +77,9 @@
 
   <div class="error" id="error"></div>
 
+  <a href="/api/auth/whop/start" class="whop-btn">Sign in with Whop</a>
+  <div class="divider"><span>or use a license key</span></div>
+
   <form id="loginForm">
     <label for="email">Email</label>
     <input type="email" id="email" required autocomplete="email">
@@ -72,7 +92,7 @@
   </form>
 
   <div class="footer">
-    Purchased through Gumroad? Your license key was emailed at checkout.<br>
+    Purchased through Whop? Use the button above — no key needed.<br>
     Contra client? Your key was sent directly — check your email or DM.
   </div>
 </div>

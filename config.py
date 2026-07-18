@@ -186,6 +186,21 @@ WHOP_WEBHOOK_SECRET = ""
 # not ours. Trials are configured per-plan on Whop's dashboard.
 WHOP_PRODUCT_URL = "https://whop.com/nexgame-lite/nexgame-lite-44"
 
+# ── Whop OAuth ("Sign in with Whop") ───────────────────────────────────
+# From dash.whop.com/settings/developer > Apps > [your app] > OAuth tab.
+# Pulled from environment variables, NOT hardcoded — same pattern as
+# BDL_API_KEY/ANTHROPIC_API_KEY/SECRET_KEY below. Set these in Railway's
+# Variables tab, not in this file.
+WHOP_CLIENT_ID = os.environ.get("WHOP_CLIENT_ID", "")
+WHOP_CLIENT_SECRET = os.environ.get("WHOP_CLIENT_SECRET", "")
+WHOP_OAUTH_REDIRECT_URI = os.environ.get(
+    "WHOP_OAUTH_REDIRECT_URI",
+    "https://nexgamelite.com/api/auth/callback/whop")
+WHOP_API_KEY = os.environ.get("WHOP_API_KEY", "")
+# Product ID (prod_...) for NexGame Lite — find it on that product's
+# page in your Whop dashboard, or via GET /api/v1/products.
+WHOP_ACCESS_PASS_ID = os.environ.get("WHOP_ACCESS_PASS_ID", "")
+
 # ── Auth ─────────────────────────────────────────────────────────────
 # Signs session cookies. MUST be set to a real random value before
 # public launch — a hardcoded default here would let anyone forge a

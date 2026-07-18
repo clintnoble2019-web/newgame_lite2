@@ -431,10 +431,6 @@ function renderPrediction(gameId, p, settled) {
   const pm = p.pitching_matchup || {};
   let matchupHtml = '';
   if (pm.home && pm.away) {
-    // NOTE: the "95 pitches" in the bullpen tooltip below is a display
-    // string, not read from config — keep it in sync with
-    // config.PITCH_COUNT_PULL (engine/mlb_sim.py's actual pull
-    // threshold) by hand if that value ever changes.
     const box = (side, label) => `
       <div class="pitcher-box">
         <div class="team">${label}</div>

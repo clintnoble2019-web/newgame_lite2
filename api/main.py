@@ -65,6 +65,7 @@ from engine.aggregate import run_simulation
 from settle.pipeline import settle_game
 from db import database as db
 from whop_webhook import router as whop_router
+from whop_oauth import router as whop_oauth_router
 
 app = FastAPI(title="NexGame Lite", version="1.0")
 @app.on_event("startup")
@@ -74,6 +75,7 @@ db.init_db()
 cust.init_db()
 provider = get_provider()
 app.include_router(whop_router)
+app.include_router(whop_oauth_router)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
