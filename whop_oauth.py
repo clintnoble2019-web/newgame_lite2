@@ -1,0 +1,219 @@
+"""
+NexGame Lite — Whop OAuth ("Sign in with Whop")
+Kage Software · 2026
+
+This is the fix for the dead end flagged in chat: a customer who buys on
+Whop has no way to discover their login credentials, because Whop's own
+license-key delivery isn't wired to anything that hands it to the buyer.
+Sign in with Whop skips that entirely — the customer clicks a button,
+approves on Whop, and lands back here already authenticated, with their
+paid-access status checked server-side. No key to lose, nothing to type.
+
+Standard OAuth 2.1 + PKCE + OIDC. Every URL and response shape below was
+verified 2026-07-18 by fetching docs.whop.com/developer/guides/oauth.md
+and docs.whop.com/api-reference/beta/users/check-user-access.md directly
+— this replaces an earlier version of this file that had three unverified
+best-guess URLs (flagged honestly at the time, now corrected against the
+real docs rather than left as guesses):
+    - AUTHORIZE_URL was guessed as https://whop.com/oauth — actually
+      https://api.whop.com/oauth/authorize.
+    - The token exchange was built as a form-encoded POST with a
+      client_secret field — Whop's documented example is a JSON POST
+      with no client_secret (PKCE is the security mechanism here, not
+      a confidential-client secret in this particular call).
+    - ACCESS_CHECK_URL was guessed as a memberships-list endpoint —
+      the real endpoint is much simpler: GET /users/{id}/access/{resource_id},
+      returning {has_access, access_level} directly. It does NOT return
+      a membership ID, which is why this file matches an existing
+      customer by email instead of whop_membership_id (see
+      customers.get_by_email's docstring for why).
+
+Uses `requests` (already a project dependency, already used throughout
+ingest/balldontlie_provider.py) rather than pulling in a new async HTTP
+library — every route below is a plain sync `def`, which FastAPI runs
+in its threadpool automatically, so a blocking requests call here
+doesn't stall the event loop.
+"""
+
+import base64
+import datetime
+import hashlib
+import hmac
+import json
+import secrets
+import time
+import uuid
+
+import requests
+from fastapi import APIRouter, Request, Response, HTTPException
+from fastapi.responses import RedirectResponse
+
+import auth
+import config
+import customers as cust
+
+router = APIRouter()
+
+AUTHORIZE_URL = "https://api.whop.com/oauth/authorize"
+TOKEN_URL = "https://api.whop.com/oauth/token"
+USERINFO_URL = "https://api.whop.com/oauth/userinfo"
+# {id} = the user_ tag from userinfo's "sub" field.
+# {resource_id} = config.WHOP_ACCESS_PASS_ID, which must be a Product ID
+# (prod_...) per the confirmed API spec — find it on that product's page
+# in your Whop dashboard, or via GET /api/v1/products.
+ACCESS_CHECK_URL = "https://api.whop.com/api/v1/users/{id}/access/{resource_id}"
+
+PKCE_COOKIE_NAME = "whop_oauth_pkce"
+PKCE_COOKIE_TTL_SECONDS = 600   # 10 min — just needs to survive the
+                                # redirect round trip to Whop and back
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _sign_pkce_payload(verifier: str, state: str) -> str:
+    """Reuses auth.py's own HMAC signing so the PKCE verifier can ride in
+    a plain cookie between the two legs of the redirect, without needing
+    server-side session storage — same stateless pattern as auth.py's
+    session tokens, just a much shorter TTL."""
+    body = json.dumps({
+        "verifier": verifier, "state": state,
+        "expires": int(time.time()) + PKCE_COOKIE_TTL_SECONDS,
+    }).encode()
+    b64_body = _b64url(body)
+    signature = auth._sign(b64_body.encode())
+    return f"{b64_body}.{signature}"
+
+
+def _verify_pkce_payload(token: str) -> dict | None:
+    if not token or "." not in token:
+        return None
+    b64_body, signature = token.rsplit(".", 1)
+    expected = auth._sign(b64_body.encode())
+    if not hmac.compare_digest(expected, signature):
+        return None
+    try:
+        padded = b64_body + "=" * (-len(b64_body) % 4)
+        body = json.loads(base64.urlsafe_b64decode(padded.encode()))
+    except Exception:
+        return None
+    if body.get("expires", 0) < time.time():
+        return None
+    return body
+
+
+@router.get("/api/auth/whop/start")
+def whop_oauth_start(response: Response):
+    """Step 1: send the customer to Whop to approve access, carrying a
+    PKCE code_challenge so the callback leg can prove it's the same
+    browser session that started this (standard OAuth 2.1 requirement,
+    not optional under PKCE)."""
+    verifier = _b64url(secrets.token_bytes(32))   # matches docs' randomString(32)
+    challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
+    state = _b64url(secrets.token_bytes(16))
+
+    redirect = RedirectResponse(
+        f"{AUTHORIZE_URL}"
+        f"?response_type=code"
+        f"&client_id={config.WHOP_CLIENT_ID}"
+        f"&redirect_uri={config.WHOP_OAUTH_REDIRECT_URI}"
+        f"&scope=openid%20profile%20email"
+        f"&state={state}"
+        f"&code_challenge={challenge}"
+        f"&code_challenge_method=S256"
+    )
+    redirect.set_cookie(
+        PKCE_COOKIE_NAME, _sign_pkce_payload(verifier, state),
+        httponly=True, max_age=PKCE_COOKIE_TTL_SECONDS, samesite="lax",
+    )
+    return redirect
+
+
+@router.get("/api/auth/callback/whop")
+def whop_oauth_callback(request: Request, code: str = "", state: str = "",
+                        error: str = ""):
+    """Step 2: Whop sends the customer back here. Exchange the code for
+    a token (JSON POST, no client_secret — PKCE's code_verifier is what
+    proves this request came from the same client that started the
+    flow), confirm they actually hold access to NexGame Lite's product
+    (not just a Whop account — those are different things), find their
+    NexGame Lite customer record by email, and log them in exactly like
+    /api/login does today."""
+    if error:
+        raise HTTPException(400, f"Whop declined: {error}")
+
+    pkce_cookie = request.cookies.get(PKCE_COOKIE_NAME, "")
+    pkce = _verify_pkce_payload(pkce_cookie)
+    if not pkce or pkce.get("state") != state:
+        raise HTTPException(400, "OAuth state mismatch — start over from "
+                                 "/api/auth/whop/start")
+
+    token_resp = requests.post(TOKEN_URL, json={
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": config.WHOP_OAUTH_REDIRECT_URI,
+        "client_id": config.WHOP_CLIENT_ID,
+        "code_verifier": pkce["verifier"],
+    }, timeout=10)
+    if token_resp.status_code != 200:
+        detail = token_resp.json().get("error_description", "") \
+                if token_resp.headers.get("content-type", "").startswith(
+                    "application/json") else ""
+        raise HTTPException(502, f"Whop token exchange failed: {detail or token_resp.status_code}")
+    access_token = token_resp.json().get("access_token", "")
+
+    userinfo_resp = requests.get(
+        USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"},
+        timeout=10)
+    if userinfo_resp.status_code != 200:
+        raise HTTPException(502, "Whop userinfo lookup failed")
+    userinfo = userinfo_resp.json()
+    whop_user_tag = userinfo.get("sub", "")          # e.g. "user_xxxxx"
+    email = userinfo.get("email", "")
+    name = userinfo.get("preferred_username", "") or userinfo.get("name", "") \
+          or (email.split("@")[0] if email else "")
+
+    # Confirm they actually hold access to YOUR product — being logged
+    # into Whop at all isn't the same as having paid for NexGame Lite.
+    access_resp = requests.get(
+        ACCESS_CHECK_URL.format(id=whop_user_tag,
+                                resource_id=config.WHOP_ACCESS_PASS_ID),
+        headers={"Authorization": f"Bearer {config.WHOP_API_KEY}"},
+        timeout=10)
+    access_data = access_resp.json() if access_resp.status_code == 200 else {}
+    has_access = access_data.get("has_access", False)
+
+    if not has_access:
+        raise HTTPException(403, "No active NexGame Lite access found on "
+                                 "this Whop account")
+
+    existing = cust.get_by_email(email) if email else None
+
+    if not existing:
+        # Fallback path — normally the webhook already created this
+        # record the moment they paid (see whop_webhook.py). This only
+        # fires if OAuth login somehow beats the webhook there, e.g. a
+        # delayed webhook delivery.
+        customer = cust.Customer(
+            customer_id=str(uuid.uuid4())[:8],
+            name=name, email=email, tier=cust.Tier.MONTHLY_BASIC,
+            purchased_at=datetime.date.today().isoformat(),
+            source="whop",
+        )
+        cust.add_customer(customer)
+        existing = cust.get_by_email(email)
+
+    # Access is confirmed live via the API call above, but the local
+    # sub_status may still say something stale (e.g. the webhook hasn't
+    # landed yet) — bring it in line now that we've independently
+    # verified access, rather than trusting a possibly-stale DB value.
+    if existing.sub_status != cust.SubStatus.ACTIVE:
+        cust.update_sub_status(existing.customer_id, cust.SubStatus.ACTIVE)
+
+    token = auth.create_session_token(existing.customer_id)
+    redirect = RedirectResponse("/")
+    redirect.set_cookie(auth.SESSION_COOKIE_NAME, token, httponly=True,
+                        max_age=auth.SESSION_TTL_SECONDS, samesite="lax")
+    redirect.delete_cookie(PKCE_COOKIE_NAME)
+    return redirect
