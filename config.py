@@ -66,6 +66,18 @@ TRIM_COUNT = int(SIMULATION_RUNS * TRIM_PCT)
 # ── Player data sufficiency (LOCKED) ─────────────────────────────────
 MLB_PITCHER_MIN_GAMES = 5       # pitchers need 5 starts before rolling avg
 MLB_BATTER_MIN_GAMES = 0        # no minimum — any recent data wins
+MLB_BULLPEN_SAMPLE_MAX = 10     # ADDED 2026-07-18: cap on relievers sampled
+                                 # per team when computing bullpen ERA/WHIP/K9
+                                 # from the roster (fires when SP is not
+                                 # confirmed — see _compute_bullpen_from_roster
+                                 # in balldontlie_provider.py). 10 comfortably
+                                 # covers a real MLB bullpen (~6-8 arms)
+                                 # while capping the per-pitcher API calls
+                                 # this adds to a prediction. The constant
+                                 # was already referenced in that function
+                                 # but never defined here — MLB predictions
+                                 # with unconfirmed starters were crashing
+                                 # with AttributeError until this landed.
 NBA_PLAYER_MIN_GAMES = 0        # no minimum
 
 ROLLING_WINDOW = 15             # last-15-games window everywhere
