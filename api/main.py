@@ -64,7 +64,6 @@ from ingest.base import get_provider
 from engine.aggregate import run_simulation
 from settle.pipeline import settle_game
 from db import database as db
-from gumroad_webhook import router as gumroad_router
 from whop_webhook import router as whop_router
 from whop_oauth import router as whop_oauth_router
 
@@ -75,7 +74,6 @@ def _on_startup():
 db.init_db()
 cust.init_db()
 provider = get_provider()
-app.include_router(gumroad_router)
 app.include_router(whop_router)
 app.include_router(whop_oauth_router)
 
