@@ -133,6 +133,13 @@ class GameContext:
     away_team: TeamData
     game_date: str
     game_time: str
+    # Raw, unparsed UTC timestamp string exactly as the source API gave
+    # it (e.g. "2026-07-19T00:10:00Z") — game_date/game_time above are
+    # already localized/formatted for display, which loses precision
+    # needed to disambiguate a doubleheader's two games from each other
+    # (same date, same two teams, only the actual start time differs).
+    # See _match_statsapi_game in ingest/balldontlie_provider.py.
+    game_datetime_raw: str = ""
     venue: str = ""
     # live state (fed by provider)
     home_score_live: int = 0

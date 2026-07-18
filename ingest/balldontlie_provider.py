@@ -792,8 +792,27 @@ class BallDontLieProvider(DataProvider):
         """Match the BDL game shell to its MLB StatsAPI schedule entry
         by team names (primary) or abbreviations (fallback), matching
         home-to-home so a doubleheader's reversed listings can't
-        cross-wire. If a doubleheader yields two candidates, prefer the
-        one that actually has a probable pitcher posted."""
+        cross-wire.
+
+        DOUBLEHEADER FIX (2026-07-19): a doubleheader produces TWO
+        candidates here (same two teams, same date) — the previous
+        tiebreaker just returned whichever candidate had ANY probable
+        pitcher posted for EITHER side, with nothing distinguishing
+        "this is game 1's shell" from "this is game 2's shell". Since
+        that same tiebreaker logic runs independently for both shells
+        and always picks the same winner, BOTH games of a doubleheader
+        could end up showing the exact same pitching matchup — this
+        is the confirmed live bug (Pirates @ Guardians doubleheader,
+        game 2 showed game 1's matchup).
+
+        Fixed by matching on actual start time instead: StatsAPI's own
+        'gameDate' timestamp per candidate is compared against the BDL
+        shell's game_datetime_raw, and whichever candidate's start
+        time is closest wins — game 1 and game 2 always have distinct
+        real start times, so this correctly separates them regardless
+        of which one has probables posted. Falls back to the old
+        "prefer probables posted" heuristic only if a raw timestamp is
+        missing on either side (better than crashing or guessing)."""
         def norm(s):
             return (s or "").strip().lower()
 
@@ -814,7 +833,23 @@ class BallDontLieProvider(DataProvider):
             return None
         if len(candidates) == 1:
             return candidates[0]
-        # doubleheader: prefer an entry with probables actually posted
+
+        # Doubleheader (2+ candidates) — match by real start time.
+        shell_dt = _parse_local_dt(shell.game_datetime_raw)
+        if shell_dt is not None:
+            timed = []
+            for g in candidates:
+                g_dt = _parse_local_dt(g.get("gameDate", ""))
+                if g_dt is not None:
+                    timed.append((abs((g_dt - shell_dt).total_seconds()), g))
+            if timed:
+                timed.sort(key=lambda pair: pair[0])
+                return timed[0][1]
+
+        # Fallback (only if a timestamp was missing somewhere above):
+        # prefer an entry with probables actually posted, same as
+        # before — imperfect, but strictly better than returning None
+        # and losing the confirmed-starter data entirely.
         for g in candidates:
             teams = g.get("teams", {})
             if (teams.get("home", {}).get("probablePitcher")
@@ -1130,6 +1165,7 @@ class BallDontLieProvider(DataProvider):
             status=_game_status(g.get("status", "")),
             home_team=home, away_team=away,
             game_date=game_date, game_time=game_time,
+            game_datetime_raw=raw_date,
             venue=g.get("venue", "") or "",
             home_score_live=_score(g, "home"),
             away_score_live=_score(g, "away"),
