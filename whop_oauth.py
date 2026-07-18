@@ -167,6 +167,13 @@ def whop_oauth_callback(request: Request, code: str = "", state: str = "",
         "code": code,
         "redirect_uri": config.WHOP_OAUTH_REDIRECT_URI,
         "client_id": config.WHOP_CLIENT_ID,
+        # Confirmed live 2026-07-18: Whop's real server requires this,
+        # despite the docs example at docs.whop.com/developer/guides/oauth
+        # showing a token exchange with no client_secret field. That
+        # example may be written for a public/browser client that can't
+        # safely hold a secret — this server-side flow can, and Whop's
+        # actual endpoint rejects the request without it.
+        "client_secret": config.WHOP_CLIENT_SECRET,
         "code_verifier": pkce["verifier"],
     }, timeout=10)
     if token_resp.status_code != 200:
