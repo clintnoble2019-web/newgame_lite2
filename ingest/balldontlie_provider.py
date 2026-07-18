@@ -1409,8 +1409,7 @@ class BallDontLieProvider(DataProvider):
             if ip > 0:
                 k9 = round(_f(s.get("pitching_k")) / ip * 9, 2)
             team.rotation_avg_k9 = k9 or 8.5
-            team.bullpen_era = team.rotation_avg_era   # refine post-M4
-            team.bullpen_whip = team.rotation_avg_whip
+            self._hydrate_bullpen_stats(team, sport)
             team.team_obp = round(_f(s.get("batting_obp"), 0.320), 3)
             team.team_slg = round(_f(s.get("batting_slg"), 0.410), 3)
         else:
@@ -1433,6 +1432,133 @@ class BallDontLieProvider(DataProvider):
             team.team_ortg = round(ortg or config.LEAGUE_AVG_ORTG, 1)
             team.team_drtg = round(drtg or config.LEAGUE_AVG_DRTG, 1)
             team.team_pace = round(pace or config.LEAGUE_AVG_PACE, 1)
+
+    def _hydrate_bullpen_stats(self, team: TeamData, sport: Sport):
+        """Real bullpen ERA/WHIP/K9 (added 2026-07-18).
+
+        Replaces the old placeholder in _hydrate_team_stats that just
+        copied team.rotation_avg_era/whip straight onto the bullpen
+        fields (previously marked '# refine post-M4'). That meant the
+        bullpen pitcher object the sim swaps to once a starter crosses
+        95 pitches (see engine/mlb_sim.py's _bullpen_pitcher /
+        PITCH_COUNT_PULL) was always modeled as "this team's rotation,
+        again" instead of its actual relief corps — which usually runs
+        meaningfully different (often sharper strikeout stuff, more
+        game-to-game volatility, no accounting for who the actual
+        closer/setup arms are).
+
+        MLB only (no-op call site exists for other sports).
+
+        Approach: pull the team's pitcher roster off the same
+        players/active endpoint _apply_active_roster_fallback already
+        uses (same "players/active" -> "players" fallback pair), using
+        the same position-string check that function already relies
+        on ("PITCHER" in position, or position in P/SP/RP) to isolate
+        pitchers. For each pitcher, pull season_stats ONE PLAYER AT A
+        TIME via player_ids[]=<single id> — the exact call shape
+        _hydrate_player_stats already uses and that's confirmed
+        working against the real API. Batching multiple IDs into one
+        season_stats call is NOT verified against the live API from
+        this codebase, so this deliberately avoids that risk rather
+        than guess at an unconfirmed shape. Capped at
+        config.MLB_BULLPEN_SAMPLE_MAX pitchers sampled per team to
+        bound the extra calls this adds to every prediction.
+
+        A pitcher counts as a reliever if their season pitching_gs
+        (games started) is 0 — a pitcher with zero starts this season
+        is, by definition, being used purely in relief. Starters
+        encountered in the same roster pull are simply skipped (their
+        stats already feed rotation_avg/confirmed_starter elsewhere).
+
+        Result is an innings-weighted average ERA/WHIP/K9 across
+        whichever relievers returned real innings pitched — weighting
+        by IP rather than a flat average keeps a September call-up's
+        3 innings from swinging the number as much as a real
+        high-leverage reliever's 40.
+
+        Falls back to the previous copy-rotation-avg behavior if the
+        roster pull, every per-pitcher pull, or the total innings all
+        come up empty — team.bullpen_era/whip should never be left at
+        the dataclass default of 0.00, which would model bullpen
+        innings as a shutout pitcher in the sim.
+        """
+        fallback_era = team.rotation_avg_era or config.LEAGUE_AVG_ERA
+        fallback_whip = team.rotation_avg_whip or config.LEAGUE_AVG_WHIP
+
+        def _use_fallback():
+            team.bullpen_era = fallback_era
+            team.bullpen_whip = fallback_whip
+            # no real per-pitcher K/9 sample here, so leave bullpen_k9
+            # at the rotation-avg K/9 rather than the dataclass 0.00 —
+            # same "never leave it at a shutout-pitcher default" reasoning
+            team.bullpen_k9 = team.rotation_avg_k9 or 8.50
+
+        roster_data = None
+        for path in ("players/active", "players"):
+            try:
+                roster_data = self._get(sport, path,
+                                        params={"team_ids[]": team.team_id})
+                break
+            except requests.RequestException:
+                continue
+        if roster_data is None:
+            _use_fallback()
+            return
+
+        players = [p for p in roster_data.get("data", [])
+                  if str(p.get("team", {}).get("id", "")) == team.team_id]
+        pitcher_ids = []
+        for p in players:
+            position = (p.get("position") or "").upper()
+            if "PITCHER" in position or position in ("P", "SP", "RP"):
+                pid = str(p.get("id", ""))
+                if pid:
+                    pitcher_ids.append(pid)
+
+        if not pitcher_ids:
+            _use_fallback()
+            return
+
+        total_ip = 0.0
+        weighted_era = weighted_whip = weighted_k9 = 0.0
+        sampled = 0
+        for pid in pitcher_ids:
+            if sampled >= config.MLB_BULLPEN_SAMPLE_MAX:
+                break
+            try:
+                data = self._get(sport, "season_stats",
+                                 params={"season": self.season,
+                                        "player_ids[]": pid})
+            except requests.RequestException:
+                continue
+            rows = data.get("data", [])
+            if not rows:
+                continue
+            s = rows[0]
+            sampled += 1
+
+            games_started = _i(s.get("pitching_gs"))
+            ip = _f(s.get("pitching_ip"))
+            if games_started > 0 or ip <= 0:
+                continue   # a starter caught in the roster pull, or no
+                          # innings logged this season — not a reliever
+                          # sample, skip without counting against the cap
+
+            era = _f(s.get("pitching_era"))
+            whip = _f(s.get("pitching_whip"))
+            k9 = (_f(s.get("pitching_k")) / ip * 9) if ip > 0 else 0.0
+            weighted_era += era * ip
+            weighted_whip += whip * ip
+            weighted_k9 += k9 * ip
+            total_ip += ip
+
+        if total_ip <= 0:
+            _use_fallback()
+            return
+
+        team.bullpen_era = round(weighted_era / total_ip, 2)
+        team.bullpen_whip = round(weighted_whip / total_ip, 2)
+        team.bullpen_k9 = round(weighted_k9 / total_ip, 2)
 
     def _hydrate_player_stats(self, player: PlayerStats, sport: Sport):
         """Rolling averages with the LOCKED fallback chain and the

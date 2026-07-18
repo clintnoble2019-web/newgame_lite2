@@ -45,13 +45,21 @@ def _resolve_pitcher(team, rng: random.Random) -> PlayerStats:
 
 
 def _bullpen_pitcher(team) -> PlayerStats:
-    """Bullpen — always separate from rotation (LOCKED)."""
+    """Bullpen — always separate from rotation (LOCKED).
+
+    k_per_9 added 2026-07-18 alongside real bullpen hydration (see
+    BallDontLieProvider._hydrate_bullpen_stats) — previously left at
+    the PlayerStats dataclass default of 0.00, which meant _half_inning
+    always fell through to the `pitcher.k_per_9 or 8.5` league-average
+    fallback for every bullpen at-bat, regardless of how the team's
+    actual relievers strike hitters out."""
     return PlayerStats(
         player_id=f"{team.team_id}_bullpen",
         name=f"{team.name} Bullpen",
         sport=team.sport, is_pitcher=True, is_starter=False,
         era=team.bullpen_era or config.LEAGUE_AVG_ERA,
         whip=team.bullpen_whip or config.LEAGUE_AVG_WHIP,
+        k_per_9=team.bullpen_k9 or 8.50,
         data_source="team_avg",
     )
 

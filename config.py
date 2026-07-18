@@ -104,6 +104,10 @@ LEAGUE_AVG_OBP = 0.320
 LEAGUE_AVG_WHIP = 1.30
 LEAGUE_AVG_ERA = 4.20
 PITCH_COUNT_PULL = 95           # starter pulled around this pitch count
+MLB_BULLPEN_SAMPLE_MAX = 10     # cap on relievers sampled per team when
+                                 # hydrating real bullpen ERA/WHIP/K9 —
+                                 # bounds the extra season_stats calls
+                                 # per prediction (see _hydrate_bullpen_stats)
 PITCHES_PER_PA = 3.9            # league average pitches per plate appearance
 
 # Hit type distribution baseline (tuned by player SLG in engine)

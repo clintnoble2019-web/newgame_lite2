@@ -183,17 +183,32 @@ def run_simulation(context: GameContext,
     # not one iteration's availability outcome.
     pitching_matchup = {}
     if context.sport == Sport.MLB:
+        def _bullpen_block(team):
+            # Mirrors run_simulation's own _bullpen_pitcher fallback
+            # chain (era/whip/k_per_9 all `or league-avg`) so this
+            # display block always matches what the sim actually ran,
+            # never a stale/placeholder number. See
+            # BallDontLieProvider._hydrate_bullpen_stats for where
+            # these real values now come from (added 2026-07-18 —
+            # previously a straight copy of rotation_avg_era/whip).
+            return {"era": round(team.bullpen_era or config.LEAGUE_AVG_ERA, 2),
+                    "whip": round(team.bullpen_whip or config.LEAGUE_AVG_WHIP, 2),
+                    "k_per_9": round(team.bullpen_k9 or 8.50, 2)}
+
         def _pitcher_block(team):
             sp = team.confirmed_starter
             if sp is not None:
-                return {"name": sp.name, "confirmed": True,
+                block = {"name": sp.name, "confirmed": True,
                         "era": round(sp.era or config.LEAGUE_AVG_ERA, 2),
                         "whip": round(sp.whip or config.LEAGUE_AVG_WHIP, 2),
                         "k_per_9": round(sp.k_per_9 or 8.50, 2)}
-            return {"name": f"{team.name} Rotation Avg", "confirmed": False,
-                    "era": round(team.rotation_avg_era or config.LEAGUE_AVG_ERA, 2),
-                    "whip": round(team.rotation_avg_whip or config.LEAGUE_AVG_WHIP, 2),
-                    "k_per_9": round(team.rotation_avg_k9 or 8.50, 2)}
+            else:
+                block = {"name": f"{team.name} Rotation Avg", "confirmed": False,
+                        "era": round(team.rotation_avg_era or config.LEAGUE_AVG_ERA, 2),
+                        "whip": round(team.rotation_avg_whip or config.LEAGUE_AVG_WHIP, 2),
+                        "k_per_9": round(team.rotation_avg_k9 or 8.50, 2)}
+            block["bullpen"] = _bullpen_block(team)
+            return block
         pitching_matchup = {
             "home": _pitcher_block(context.home_team),
             "away": _pitcher_block(context.away_team),

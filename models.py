@@ -103,6 +103,9 @@ class TeamData:
     # Bullpen — always separate, always active (LOCKED)
     bullpen_era: float = 0.00
     bullpen_whip: float = 0.00
+    bullpen_k9: float = 0.00       # added 2026-07-18 alongside real
+                                    # bullpen hydration — see
+                                    # BallDontLieProvider._hydrate_bullpen_stats
     team_obp: float = 0.000
     team_slg: float = 0.000
 
