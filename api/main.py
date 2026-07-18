@@ -119,6 +119,14 @@ def login_page():
     return FileResponse(os.path.join(STATIC_DIR, "login.html"))
 
 
+# Public human-readable accuracy page. Wraps the same /api/accuracy
+# endpoint the logged-in dashboard uses, but as a proper HTML view so
+# marketing visitors don't get sent to raw JSON as the "proof" link.
+@app.get("/accuracy")
+def public_accuracy_page():
+    return FileResponse(os.path.join(STATIC_DIR, "accuracy.html"))
+
+
 @app.post("/api/login")
 def api_login(response: Response, email: str = Query(...),
              license_key: str = Query(...)):

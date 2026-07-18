@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NexGame Lite — Public Track Record</title>
+<style>
+  :root {
+    --bg: #0D0D0D; --panel: #161616; --card: #1E1E1E;
+    --accent: #00E5FF; --gold: #FFD700; --green: #00FF88;
+    --red: #FF5566; --text: #CCCCCC; --dim: #888888;
+    --border: #2A2A2A;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; line-height: 1.5; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+  a { color: var(--accent); }
+
+  nav { display: flex; justify-content: space-between; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--border); }
+  .logo { font-size: 20px; font-weight: 700; color: #fff; letter-spacing: 0.5px; }
+  .logo span { color: var(--accent); }
+  .back-link { font-size: 14px; color: var(--dim); text-decoration: none; }
+  .back-link:hover { color: var(--accent); }
+
+  h1 { color: #fff; font-size: 30px; margin: 48px 0 8px; }
+  .intro { color: var(--dim); font-size: 15px; margin-bottom: 40px; max-width: 700px; }
+
+  .filter-row { display: flex; gap: 12px; margin-bottom: 24px; align-items: center; }
+  .filter-row label { color: var(--dim); font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; }
+  select { background: var(--card); color: var(--text); border: 1px solid var(--border); padding: 8px 14px; border-radius: 6px; font-size: 14px; }
+
+  .acc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+  .acc-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 24px; text-align: center; }
+  .acc-card .big { font-size: 40px; font-weight: 700; color: var(--accent); }
+  .acc-card .lbl { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 6px; }
+
+  .cs2-note { color: var(--dim); font-size: 13px; margin: 8px 0 40px; line-height: 1.6; }
+
+  .section-title { font-size: 22px; color: #fff; margin: 32px 0 16px; }
+  .recent-item { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin-bottom: 8px; font-size: 14px; }
+  .recent-item strong { color: #fff; }
+
+  .loading { color: var(--dim); font-style: italic; }
+
+  footer { border-top: 1px solid var(--border); padding: 30px 0; margin-top: 60px; text-align: center; font-size: 12px; color: var(--dim); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <nav>
+    <div class="logo">NEXGAME <span>LITE</span></div>
+    <a href="/" class="back-link">← Back to home</a>
+  </nav>
+
+  <h1>Public Track Record</h1>
+  <p class="intro">
+    Every prediction is graded against the real final score once the
+    game ends. Nothing here is cherry-picked &mdash; these are the same
+    numbers we look at internally, updated automatically as games settle.
+  </p>
+
+  <div class="filter-row">
+    <label for="sport">Sport:</label>
+    <select id="sport" onchange="loadAccuracy()">
+      <option value="">All</option>
+      <option value="MLB">MLB</option>
+      <option value="NBA">NBA</option>
+      <option value="WNBA">WNBA</option>
+    </select>
+  </div>
+
+  <div class="acc-grid" id="acc-cards">
+    <div class="acc-card"><div class="big loading">&hellip;</div><div class="lbl">Win / Loss</div></div>
+    <div class="acc-card"><div class="big loading">&hellip;</div><div class="lbl">Score Range</div></div>
+    <div class="acc-card"><div class="big loading">&hellip;</div><div class="lbl">Player Totals (&plusmn;20%)</div></div>
+  </div>
+  <div class="cs2-note">
+    CS2 has been excluded from these accuracy figures &mdash; CS2 roster
+    composition varies too much match-to-match (frequent stand-ins) to
+    track consistently against a fixed prediction. The model still
+    calls CS2 win/loss on individual game cards.
+  </div>
+
+  <div class="section-title">Settled Games History</div>
+  <div id="acc-recent"><span class="loading">Loading history&hellip;</span></div>
+
+  <footer>
+    NexGame Lite &middot; Kage Software &middot; Predictions are probabilistic, not guaranteed &middot;
+    <a href="/">Home</a> &middot; <a href="/login">Log in</a>
+  </footer>
+</div>
+
+<script>
+async function loadAccuracy() {
+  const sport = document.getElementById('sport').value;
+  const url = sport ? `/api/accuracy?sport=${sport}` : '/api/accuracy';
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const a = await r.json();
+    const o = a.overall || {};
+    document.getElementById('acc-cards').innerHTML = `
+      <div class="acc-card"><div class="big">${o.win_loss_pct != null ? o.win_loss_pct + '%' : '—'}</div>
+        <div class="lbl">Win / Loss</div></div>
+      <div class="acc-card"><div class="big">${o.score_range_pct != null ? o.score_range_pct + '%' : '—'}</div>
+        <div class="lbl">Score Range</div></div>
+      <div class="acc-card"><div class="big">${o.player_total_pct != null ? o.player_total_pct + '%' : '—'}</div>
+        <div class="lbl">Player Totals (±20%)</div></div>`;
+    document.getElementById('acc-recent').innerHTML =
+      (a.recent || []).map(s => `
+        <div class="recent-item">
+          ${s.win_loss_correct ? '✅' : '❌'}
+          <strong>${s.away_team} @ ${s.home_team}</strong> (${s.sport})
+          — Final ${s.away_team} ${s.actual_away} – ${s.home_team} ${s.actual_home}
+          · Player acc ${s.player_accuracy_pct}%
+        </div>`).join('') ||
+      '<span class="loading">No settled games yet.</span>';
+  } catch (e) {
+    document.getElementById('acc-cards').innerHTML =
+      `<span class="loading">Accuracy unavailable: ${e.message}</span>`;
+    document.getElementById('acc-recent').innerHTML = '';
+  }
+}
+loadAccuracy();
+</script>
+
+</body>
+</html>
