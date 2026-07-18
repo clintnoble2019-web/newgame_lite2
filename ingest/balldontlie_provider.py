@@ -52,30 +52,30 @@ PROBABLE STARTERS (2026-07-12):
     BDL player id (so real stats hydrate). Live lineup > probable >
     rotation avg, in that order. See _apply_probable_starters.
 
-KALSHI SCHEDULE + ODDS (2026-07-14):
-    NexGame Lite is now a gambling-analytics tool, not pure data
-    science — Kalshi (CFTC-regulated, read-only public market data,
-    no auth needed, VERIFIED live) is now the PRIMARY schedule filter
-    across all four sports: get_games_for_date only returns games that
-    exist as real Kalshi markets, matched by team NAME (not code —
-    Kalshi's team codes are inconsistent across sports and CS2's are
-    fully arbitrary per-event strings with no relationship to the
-    team name at all) against BDL's own game data for the same date.
+KALSHI SCHEDULE + ODDS — REMOVED (2026-07-19):
+    Kalshi was briefly the schedule gate for MLB/NBA/WNBA (added
+    2026-07-14): get_games_for_date only returned games that existed
+    as real Kalshi markets, cross-matched to BDL by team name/code.
+    Removed at the user's explicit request ("not using Kalshi
+    anymore") after it caused real games to silently vanish from the
+    schedule — confirmed live via diagnose_missing_teams.py: Portland
+    (WNBA) had a real Kalshi market that never cross-matched to a BDL
+    game shell, and Athletics (MLB) had no Kalshi market at all that
+    day, so both dropped out with no visible error, indistinguishable
+    from the dashboard's point of view.
 
-    Matching is done SHELL-BY-SHELL, never globally — for each Kalshi
-    game, both its sides must match ONE SPECIFIC BDL game's home+away
-    (in either order), so two different games' teams can never get
-    cross-wired. A Kalshi game with no BDL match is skipped entirely
-    (never shown with fabricated stats); a BDL game with no Kalshi
-    market is also skipped (Kalshi genuinely drives what's shown now).
-    See ingest/kalshi_client.py for the tested ticker-parsing and
-    name-matching logic this depends on.
+    get_games_for_date now returns every real BDL game directly for
+    ALL sports, same simple pattern CS2 always used (CS2 was never
+    Kalshi-gated in the first place — see the CS2 coverage-gap note
+    that used to live here, same underlying lesson: gating a real
+    data source on a thinner second source drops real games). Kalshi
+    client code (ingest/kalshi_client.py) is left in place, just no
+    longer imported or called from here — safe to delete later if
+    Kalshi is never revisited, kept for now in case that changes.
 
-    Every existing per-game method (get_game_context, get_final_boxscore,
-    settling) is UNCHANGED — they still receive a real BDL game_id and
-    work exactly as before. Kalshi only changes WHICH games appear in
-    the list, and attaches kalshi_event_ticker/kalshi_home_prob/
-    kalshi_away_prob onto the GameContext for display.
+    Every per-game method (get_game_context, get_final_boxscore,
+    settling) is unaffected either way — they always received a real
+    BDL game_id and never depended on Kalshi to function.
 
 Docs: https://docs.balldontlie.io/  (NBA)  ·  https://mlb.balldontlie.io/
 Auth: header "Authorization: <api_key>" — no "Bearer" prefix.
@@ -87,7 +87,6 @@ import requests
 
 import config
 from ingest.base import DataProvider
-from ingest.kalshi_client import get_kalshi_games, match_team_by_name
 from models import (
     GameContext, PlayerStats, TeamData,
     Sport, GameStatus, InjuryStatus,
@@ -209,92 +208,6 @@ def _score(g: dict, side: str) -> int:
     return 0
 
 
-def _match_kalshi_to_shell(kalshi_game: dict, shells: list):
-    """Match one Kalshi game's two sides against a list of BDL
-    GameContext shells for the same date. SHELL-BY-SHELL matching
-    (never a global team-name lookup across all shells) so two
-    different games' teams can never cross-wire — e.g. if two
-    different Yankees games somehow existed for the same date, a
-    global match could attach the wrong odds to the wrong game.
-
-    Returns (shell, home_side, away_side) — home_side/away_side are
-    the Kalshi side dicts correctly assigned to match the shell's
-    actual home/away (Kalshi's own side order isn't guaranteed to
-    match BDL's home/away convention). Returns (None, None, None) if
-    no shell's both teams match this Kalshi game's both sides.
-
-    TWO matching strategies per side, tried in order (VERIFIED live
-    2026-07-14): name-based fuzzy match first (handles the normal
-    case, e.g. Kalshi's truncated "New York M" vs BDL's "New York
-    Mets"); falls back to exact code/abbreviation equality when name
-    matching fails — needed for Toronto Tempo specifically, where BDL
-    returned just "Tempo" (no city) so Kalshi's side name "Toronto"
-    had nothing to substring-match against, even though both sides
-    agree on the short code "TOR". New expansion teams are the most
-    likely case to hit this gap; the abbreviation fallback is safe
-    for every sport since abbreviations are unique per team."""
-    sides = kalshi_game.get("sides", [])
-    if len(sides) != 2:
-        return None, None, None
-    side_a, side_b = sides
-
-    def side_matches_team(side: dict, team) -> bool:
-        if match_team_by_name(side.get("name", ""), [{"name": team.name}]):
-            return True
-        code = (side.get("code") or "").strip().upper()
-        abbrev = (getattr(team, "abbrev", "") or "").strip().upper()
-        return bool(code) and code == abbrev
-
-    for shell in shells:
-        if (side_matches_team(side_a, shell.home_team)
-                and side_matches_team(side_b, shell.away_team)):
-            return shell, side_a, side_b
-        if (side_matches_team(side_b, shell.home_team)
-                and side_matches_team(side_a, shell.away_team)):
-            return shell, side_b, side_a
-    return None, None, None
-
-
-def _mid_prob(side: dict) -> float:
-    """Kalshi yes_bid/yes_ask midpoint as a 0-100 probability, matching
-    home_win_pct's scale. Returns 0.0 if bid/ask are both zero (no
-    liquidity yet) rather than a misleading 50.0."""
-    bid, ask = side.get("yes_bid", 0.0), side.get("yes_ask", 0.0)
-    if bid <= 0 and ask <= 0:
-        return 0.0
-    return round((bid + ask) / 2 * 100, 1)
-
-
-def _attach_kalshi_odds_to_shell(shell: GameContext) -> None:
-    """Attach Kalshi odds to a SINGLE GameContext already built via a
-    per-game fetch (get_game_context / _cs2_game_context).
-
-    BUG FIXED 2026-07-14: those two methods build their own fresh
-    GameContext independent of get_games_for_date's list — so without
-    this call, a game that appeared correctly Kalshi-matched in the
-    schedule (proof the market exists and matches) would still run
-    its actual prediction with kalshi_event_ticker="" and 0.0 probs,
-    because get_game_context never re-ran the matching step at all.
-    VERIFIED live: Run Prediction on a schedule-listed WNBA game
-    (Washington @ Tempo) showed no Kalshi line despite the game only
-    appearing in the list because it WAS matched.
-
-    Mutates shell in place; no-op on any failure (never blocks a
-    prediction from running just because Kalshi is unreachable)."""
-    try:
-        kalshi_games = get_kalshi_games(shell.sport.value, shell.game_date)
-    except Exception:
-        return
-    for kg in kalshi_games:
-        matched_shell, home_side, away_side = _match_kalshi_to_shell(
-            kg, [shell])
-        if matched_shell is not None:
-            shell.kalshi_event_ticker = kg["event_ticker"]
-            shell.kalshi_home_prob = _mid_prob(home_side)
-            shell.kalshi_away_prob = _mid_prob(away_side)
-            return
-
-
 class BallDontLieProvider(DataProvider):
     """Production provider — GOAT tier, MLB + NBA. Same DataProvider
     interface as mock/free/mysportsfeeds — engine, settling, and
@@ -326,65 +239,15 @@ class BallDontLieProvider(DataProvider):
 
     # ── interface ────────────────────────────────────────────────────
     def get_games_for_date(self, sport: Sport, date_str: str) -> list[GameContext]:
-        """PUBLIC ENTRY POINT — Kalshi-integrated (2026-07-14), with
-        TWO different strategies depending on real market coverage:
-
-        MLB/NBA/WNBA: fully Kalshi-gated. Only games that exist as
-        real Kalshi markets are returned. Coverage is dense enough
-        here (VERIFIED live: WNBA correctly matched real games) that
-        this doesn't meaningfully shrink the schedule.
-
-        CS2: NOT gated — show every real BDL match, with Kalshi-
-        matched ones enriched with odds AND sorted to the top.
-        VERIFIED live 2026-07-14: Kalshi only had 2 open CS2 markets
-        against 28 real BDL matches that same day, and the 2 Kalshi
-        matches didn't even overlap with BDL's "current tournament"
-        list — full gating would have hidden 26 of 28 real matches.
-        This isn't a matching bug (see the abbreviation-fallback fix
-        for a real bug); it's that Kalshi's actual CS2 coverage is
-        just thin. Games without a Kalshi match simply show without
-        the odds line, same as any other unmatched game.
-
-        Falls back to the plain BDL list (no Kalshi fields) if the
-        Kalshi fetch itself fails — a Kalshi outage shouldn't take
-        the whole schedule down, for any sport."""
-        bdl_shells = self._bdl_shells_for_date(sport, date_str)
-
-        try:
-            kalshi_games = get_kalshi_games(sport.value, date_str)
-        except Exception:
-            return bdl_shells   # Kalshi unreachable — degrade gracefully
-
-        if sport == Sport.CS2:
-            for kg in kalshi_games:
-                shell, home_side, away_side = _match_kalshi_to_shell(
-                    kg, bdl_shells)
-                if shell is None:
-                    continue   # no confident match — leave unenriched
-                shell.kalshi_event_ticker = kg["event_ticker"]
-                shell.kalshi_home_prob = _mid_prob(home_side)
-                shell.kalshi_away_prob = _mid_prob(away_side)
-            # Kalshi-matched games first, preserving original relative
-            # order within each group (stable sort).
-            bdl_shells.sort(
-                key=lambda s: 0 if s.kalshi_event_ticker else 1)
-            return bdl_shells
-
-        if not kalshi_games:
-            return []   # Kalshi is the schedule gate for these sports —
-                        # no markets, no games shown, even if BDL has some
-
-        out = []
-        for kg in kalshi_games:
-            shell, home_side, away_side = _match_kalshi_to_shell(
-                kg, bdl_shells)
-            if shell is None:
-                continue   # no confident BDL match — skip, never guess
-            shell.kalshi_event_ticker = kg["event_ticker"]
-            shell.kalshi_home_prob = _mid_prob(home_side)
-            shell.kalshi_away_prob = _mid_prob(away_side)
-            out.append(shell)
-        return out
+        """PUBLIC ENTRY POINT. Returns every real game BDL has for this
+        date, for every sport — no external gating. See the module
+        docstring (KALSHI SCHEDULE + ODDS — REMOVED) for why this is
+        deliberately simple now: Kalshi gating briefly sat on top of
+        this and caused real games to silently vanish (Portland/WNBA,
+        Athletics/MLB) when its own market coverage or team-name
+        matching came up short — a thinner second source shouldn't be
+        able to hide a game the primary source actually has."""
+        return self._bdl_shells_for_date(sport, date_str)
 
     def _bdl_shells_for_date(self, sport: Sport,
                              date_str: str) -> list[GameContext]:
@@ -578,7 +441,6 @@ class BallDontLieProvider(DataProvider):
             for p in shell.home_team.roster + shell.away_team.roster:
                 self._hydrate_player_stats(p, sport)
 
-        _attach_kalshi_odds_to_shell(shell)
         return shell
 
     def _apply_wnba_injuries(self, team: TeamData):
@@ -681,7 +543,6 @@ class BallDontLieProvider(DataProvider):
                     team, tourney_id, match_id)
             except requests.RequestException:
                 pass   # keep league-avg defaults (LOCKED fail-safe pattern)
-        _attach_kalshi_odds_to_shell(shell)
         return shell
 
     def _hydrate_cs2_team_and_players(self, team: TeamData,
