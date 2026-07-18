@@ -73,13 +73,13 @@ def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def _sign_pkce_payload(verifier: str, state: str) -> str:
+def _sign_pkce_payload(verifier: str, state: str, nonce: str) -> str:
     """Reuses auth.py's own HMAC signing so the PKCE verifier can ride in
     a plain cookie between the two legs of the redirect, without needing
     server-side session storage — same stateless pattern as auth.py's
     session tokens, just a much shorter TTL."""
     body = json.dumps({
-        "verifier": verifier, "state": state,
+        "verifier": verifier, "state": state, "nonce": nonce,
         "expires": int(time.time()) + PKCE_COOKIE_TTL_SECONDS,
     }).encode()
     b64_body = _b64url(body)
@@ -113,6 +113,10 @@ def whop_oauth_start(response: Response):
     verifier = _b64url(secrets.token_bytes(32))   # matches docs' randomString(32)
     challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
     state = _b64url(secrets.token_bytes(16))
+    # Required whenever scope includes 'openid' — binds the ID token
+    # Whop returns to this specific login attempt, so a stolen/replayed
+    # ID token from a different session can't be reused here.
+    nonce = _b64url(secrets.token_bytes(16))
 
     # Properly URL-encoded via urlencode rather than raw f-string
     # interpolation — some OAuth servers are strict about redirect_uri
@@ -124,12 +128,13 @@ def whop_oauth_start(response: Response):
         "redirect_uri": config.WHOP_OAUTH_REDIRECT_URI,
         "scope": "openid profile email",
         "state": state,
+        "nonce": nonce,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     })
     redirect = RedirectResponse(f"{AUTHORIZE_URL}?{params}")
     redirect.set_cookie(
-        PKCE_COOKIE_NAME, _sign_pkce_payload(verifier, state),
+        PKCE_COOKIE_NAME, _sign_pkce_payload(verifier, state, nonce),
         httponly=True, max_age=PKCE_COOKIE_TTL_SECONDS, samesite="lax",
     )
     return redirect
@@ -169,7 +174,36 @@ def whop_oauth_callback(request: Request, code: str = "", state: str = "",
                 if token_resp.headers.get("content-type", "").startswith(
                     "application/json") else ""
         raise HTTPException(502, f"Whop token exchange failed: {detail or token_resp.status_code}")
-    access_token = token_resp.json().get("access_token", "")
+    token_data = token_resp.json()
+    access_token = token_data.get("access_token", "")
+
+    # Nonce check — if Whop returned an id_token (standard for an
+    # 'openid' scope request), confirm its nonce claim matches what we
+    # generated in whop_oauth_start. NOTE: this decodes the JWT payload
+    # without verifying its cryptographic signature (that would need
+    # fetching and caching Whop's JWKS, meaningfully more scope than
+    # this fix needs). That's an acceptable tradeoff here specifically
+    # because the nonce isn't this flow's actual trust boundary — the
+    # access_resp call a few lines below independently re-verifies
+    # paid access directly against Whop's server using our own
+    # WHOP_API_KEY, not by trusting any client-supplied token claim.
+    # The nonce check below is defense-in-depth against a replayed
+    # authorize request, not the thing standing between an attacker
+    # and a paid account.
+    id_token = token_data.get("id_token", "")
+    if id_token and id_token.count(".") == 2:
+        try:
+            _, payload_b64, _ = id_token.split(".")
+            padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+            id_claims = json.loads(base64.urlsafe_b64decode(padded.encode()))
+            if id_claims.get("nonce") != pkce.get("nonce"):
+                raise HTTPException(400, "OAuth nonce mismatch — start "
+                                         "over from /api/auth/whop/start")
+        except HTTPException:
+            raise
+        except Exception:
+            pass   # malformed/unparseable id_token — not fatal, since
+                   # the access check below is the real trust boundary
 
     userinfo_resp = requests.get(
         USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"},
