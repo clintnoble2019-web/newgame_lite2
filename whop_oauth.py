@@ -197,7 +197,7 @@ def whop_oauth_callback(request: Request, code: str = "", state: str = "",
         # delayed webhook delivery.
         customer = cust.Customer(
             customer_id=str(uuid.uuid4())[:8],
-            name=name, email=email, tier=cust.Tier.MONTHLY_BASIC,
+            name=name, email=email, tier=cust.Tier.MONTHLY,
             purchased_at=datetime.date.today().isoformat(),
             source="whop",
         )
@@ -211,8 +211,20 @@ def whop_oauth_callback(request: Request, code: str = "", state: str = "",
     if existing.sub_status != cust.SubStatus.ACTIVE:
         cust.update_sub_status(existing.customer_id, cust.SubStatus.ACTIVE)
 
+    # True in the common case too — most customers' rows already exist
+    # from whop_webhook.py's membership.activated handler at purchase
+    # time, but THIS is their first-ever login, which is the actual
+    # moment 'signed up' can honestly be tracked from a browser pixel.
+    is_new_signup = cust.mark_first_login(existing.customer_id)
+
     token = auth.create_session_token(existing.customer_id)
-    redirect = RedirectResponse("/")
+    # whop.track('complete_registration') has to fire from JS in the
+    # browser (the Whop pixel is client-side) — it can't fire from this
+    # server-side redirect. Signal it via a one-shot query param instead;
+    # index.html's own script checks for ?new_signup=1 on load, fires
+    # the pixel event once, then strips the param via history.replaceState
+    # so a page refresh or bookmark doesn't re-fire it.
+    redirect = RedirectResponse("/?new_signup=1" if is_new_signup else "/")
     redirect.set_cookie(auth.SESSION_COOKIE_NAME, token, httponly=True,
                         max_age=auth.SESSION_TTL_SECONDS, samesite="lax")
     redirect.delete_cookie(PKCE_COOKIE_NAME)

@@ -116,6 +116,10 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
                           `&license_key=${encodeURIComponent(key)}`,
                           { method: 'POST', credentials: 'include' });
     if (r.ok) {
+      const data = await r.json();
+      if (window.whop && data.is_new_signup) {
+        whop.track('complete_registration');
+      }
       window.location.href = '/';
     } else {
       const err = await r.json();

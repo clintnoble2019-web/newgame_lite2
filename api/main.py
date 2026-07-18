@@ -136,10 +136,11 @@ def api_login(response: Response, email: str = Query(...),
     if not result:
         raise HTTPException(401, "Invalid email/license key, or access "
                                  "has expired")
-    token, customer = result
+    token, customer, is_new_signup = result
     response.set_cookie(auth.SESSION_COOKIE_NAME, token, httponly=True,
                         max_age=auth.SESSION_TTL_SECONDS, samesite="lax")
-    return {"name": customer.name, "tier": customer.tier.value}
+    return {"name": customer.name, "tier": customer.tier.value,
+           "is_new_signup": is_new_signup}
 
 
 @app.post("/api/logout")

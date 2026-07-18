@@ -62,16 +62,21 @@ def verify_session_token(token: str) -> str | None:
     return body.get("customer_id")
 
 
-def login(email: str, license_key: str) -> tuple[str, cust.Customer] | None:
-    """Verify credentials, confirm active access, return (token, customer)
-    or None if login should be rejected."""
+def login(email: str, license_key: str) -> tuple[str, cust.Customer, bool] | None:
+    """Verify credentials, confirm active access, return
+    (token, customer, is_new_signup) or None if login should be
+    rejected. is_new_signup is True only the very first time this
+    customer ever successfully logs in — see
+    customers.mark_first_login for why login (not purchase) is the
+    correct moment to track as 'signed up' for the Whop pixel."""
     customer = cust.verify_credentials(email, license_key)
     if not customer:
         return None
     if not cust.has_active_access(customer):
         return None   # correct credentials, but access has lapsed
     token = create_session_token(customer.customer_id)
-    return token, customer
+    is_new_signup = cust.mark_first_login(customer.customer_id)
+    return token, customer, is_new_signup
 
 
 def get_current_customer(token: str) -> cust.Customer | None:

@@ -123,6 +123,9 @@ class Customer:
     status_updated_at: str = ""     # last time Whop told us status changed
     win_back_sent: bool = False
     last_contacted_at: str = ""
+    first_login_at: str = ""        # set once, on the actual first
+                                     # successful login (not purchase) —
+                                     # see mark_first_login()
     notes: str = ""
 
 
@@ -142,6 +145,7 @@ CREATE TABLE IF NOT EXISTS customers (
     win_back_sent            INTEGER NOT NULL DEFAULT 0,
     last_contacted_at        TEXT,
     last_action_sent         TEXT,
+    first_login_at           TEXT,
     notes                    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
@@ -185,6 +189,12 @@ def init_db(path: str = None):
             db.execute("ALTER TABLE customers ADD COLUMN "
                        "whop_subscription_id TEXT")
 
+        # Migration 2026-07-18: first_login_at, added for Whop pixel
+        # 'complete_registration' attribution — see mark_first_login().
+        if "first_login_at" not in cols:
+            db.execute("ALTER TABLE customers ADD COLUMN "
+                       "first_login_at TEXT")
+
 
 def _row_to_customer(r) -> Customer:
     return Customer(
@@ -198,6 +208,7 @@ def _row_to_customer(r) -> Customer:
         status_updated_at=r["status_updated_at"] or "",
         win_back_sent=bool(r["win_back_sent"]),
         last_contacted_at=r["last_contacted_at"] or "",
+        first_login_at=r["first_login_at"] or "",
         notes=r["notes"] or "")
 
 
@@ -276,6 +287,31 @@ def get_by_email(email: str, path: str = None) -> Customer | None:
             "SELECT * FROM customers WHERE lower(email) = lower(?)",
             (email.strip(),)).fetchone()
     return _row_to_customer(row) if row else None
+
+
+def mark_first_login(customer_id: str, path: str = None) -> bool:
+    """Sets first_login_at the first time this ever runs for a given
+    customer; a no-op on every call after that. Returns True only on
+    the call that actually set it — that return value is the signal
+    both login paths (whop_oauth.py's OAuth flow and api/main.py's
+    manual /api/login) use to decide whether to fire the Whop pixel's
+    whop.track('complete_registration') event.
+
+    Deliberately keyed to LOGIN, not to the customer row being
+    created. The row itself is usually created by whop_webhook.py at
+    the moment of PURCHASE — server-to-server, no browser involved, so
+    there's no page load on nexgamelite.com to fire a client-side
+    pixel event from. The customer's actual first arrival in a
+    browser on our site is their first login, whichever path they use
+    to do it — that's the true earliest moment 'signed up' can
+    honestly be tracked from."""
+    with _db(path) as db:
+        cur = db.execute(
+            "UPDATE customers SET first_login_at = ? "
+            "WHERE customer_id = ? AND first_login_at IS NULL",
+            (datetime.now(timezone.utc).isoformat(timespec="seconds"),
+             customer_id))
+        return cur.rowcount > 0
 
 
 def verify_credentials(email: str, license_key: str,

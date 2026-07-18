@@ -108,6 +108,10 @@
 </div>
 
 <script>
+// Whop pixel: this page IS the funnel's landing page — fire
+// view_content unconditionally on every load, no gating needed.
+if (window.whop) { whop.track('view_content'); }
+
 // Live accuracy stats — /api/accuracy is PUBLIC (no login required),
 // same endpoint the logged-in dashboard's Accuracy tab uses.
 fetch('/api/accuracy')

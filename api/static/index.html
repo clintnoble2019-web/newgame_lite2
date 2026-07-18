@@ -249,6 +249,16 @@
 <div id="modal-root"></div>
 
 <script>
+// Whop pixel: catches the OAuth login path (whop_oauth.py redirects
+// here with ?new_signup=1 on a customer's genuine first-ever login —
+// see customers.mark_first_login for why login, not purchase, is the
+// trackable moment). Fires once, then strips the param via
+// history.replaceState so a refresh or bookmark doesn't re-fire it.
+if (window.whop && new URLSearchParams(location.search).get('new_signup') === '1') {
+  whop.track('complete_registration');
+  history.replaceState({}, '', location.pathname);
+}
+
 const LIVE_POLL_MS = 60000;
 let liveTimer = null;
 
