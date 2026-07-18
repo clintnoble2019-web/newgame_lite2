@@ -164,6 +164,27 @@ def init_db(path: str = None):
     with _db(path) as db:
         db.executescript(SCHEMA)
 
+        # Migration 2026-07-18: rename gumroad_subscription_id -> 
+        # whop_subscription_id on any pre-existing customers table
+        # created before the Whop swap. CREATE TABLE IF NOT EXISTS is a
+        # no-op when the table already exists, so the schema block
+        # above alone doesn't rename anything on live databases — this
+        # explicit migration does. Safe to run on fresh DBs too: if
+        # the old column isn't there, we skip; if the new column is
+        # already there, we skip.
+        cols = {r["name"] for r in db.execute(
+            "PRAGMA table_info(customers)").fetchall()}
+        if "gumroad_subscription_id" in cols and "whop_subscription_id" not in cols:
+            db.execute("ALTER TABLE customers "
+                       "RENAME COLUMN gumroad_subscription_id "
+                       "TO whop_subscription_id")
+        elif "whop_subscription_id" not in cols:
+            # Fresh DB with neither name (shouldn't happen given
+            # SCHEMA above, but defensive) — add the column so
+            # _row_to_customer can read it without KeyError.
+            db.execute("ALTER TABLE customers ADD COLUMN "
+                       "whop_subscription_id TEXT")
+
 
 def _row_to_customer(r) -> Customer:
     return Customer(
