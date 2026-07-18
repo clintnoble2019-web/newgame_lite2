@@ -196,6 +196,20 @@ class SimulationOutput:
     kalshi_event_ticker: str = ""
     kalshi_home_prob: float = 0.0
     kalshi_away_prob: float = 0.0
+    # late_locked (added 2026-07-17): True only when catch_missed_games_job
+    # generated this prediction AFTER the game was already FINAL/LIVE,
+    # because lock_and_predict_job never caught it while it was still
+    # SCHEDULED (doubleheader nightcap added same-day, a game rescheduled
+    # after that day's scan cycle already ran, a brief scheduler-downtime
+    # gap, etc.). The simulation itself is still blind — it only ever
+    # sees pre-game team/roster/pitching data, never the actual score —
+    # so a late-locked prediction is not "looking at the answer." This
+    # flag exists purely so the public accuracy record can be filtered
+    # or footnoted by lock timing later if that distinction ever matters.
+    # False for every prediction generated the normal way. Default keeps
+    # old cached payloads (predicted before this field existed)
+    # deserializable via SimulationOutput(**payload).
+    late_locked: bool = False
 
 
 # ── Settling ──────────────────────────────────────────────────────────

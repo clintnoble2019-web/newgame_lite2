@@ -19,6 +19,35 @@ historical accuracy never accumulating while you're offline.
 Uses the exact same provider / engine / settle imports api/main.py
 already uses — no parallel logic, no reinvented sim calls.
 
+MISSED-GAMES GAP (2026-07-17):
+    lock_and_predict_job only ever creates a prediction while a game is
+    still SCHEDULED, checked every LOCK_CHECK_INTERVAL_MIN. settle_job
+    only ever settles a game that already HAS a prediction row. Nothing
+    previously covered the gap between those two: a game that goes
+    straight from "not yet scanned" to FINAL/LIVE without ever being
+    caught in SCHEDULED status — a doubleheader nightcap added same-day,
+    a game rescheduled after that day's scan cycle already ran, or a
+    brief window where the process restarted and missed a tick.
+
+    That game gets no prediction, ever, from either job — which means
+    settle_job has nothing to check it against, and it silently never
+    appears in the settled history or the accuracy numbers. No error,
+    no log line, nothing on the dashboard. Confirmed live: CHW @ TOR
+    (FINAL 12-4) and a TB @ BOS doubleheader nightcap both fell through
+    this exact gap on 2026-07-17.
+
+    catch_missed_games_job() closes it: on the same timer as settle_job,
+    it scans today's and yesterday's slate for games that are FINAL or
+    LIVE, have no existing prediction row, and aren't POSTPONED/TBD
+    (nothing happened for those, so nothing should be predicted). Any
+    match gets a prediction generated the normal way — run_simulation()
+    only ever looks at pre-game team/roster/pitching data, never the
+    actual score, so this isn't "predicting" a result it already knows
+    — and the prediction is saved with late_locked=True so it stays
+    distinguishable from a normal, on-time lock. Once saved, settle_job
+    picks it up on its own next tick like any other unsettled
+    prediction — no separate settle logic needed here.
+
 Must be started INSIDE the deployed FastAPI process (Railway), not run
 as a separate local script, or it dies the moment you close your laptop.
 
@@ -69,6 +98,14 @@ SPORTS = (Sport.MLB, Sport.NBA, Sport.WNBA, Sport.CS2)
 
 LOCK_CHECK_INTERVAL_MIN = 10     # how often to scan for games to predict
 SETTLE_CHECK_INTERVAL_MIN = 15   # how often to scan for games to settle
+CATCH_MISSED_INTERVAL_MIN = 15   # how often to scan for games that slipped
+                                  # past lock_and_predict_job entirely
+
+# Statuses catch_missed_games_job will backfill a late prediction for.
+# Deliberately excludes SCHEDULED (that's lock_and_predict_job's job,
+# not this one's) and POSTPONED/TBD (nothing happened, so there's
+# nothing to blindly predict against).
+_CATCHABLE_STATUSES = (GameStatus.LIVE, GameStatus.FINAL)
 
 _provider = None
 
@@ -131,6 +168,77 @@ def lock_and_predict_job():
                     )
                 except Exception:
                     logger.exception("Prediction/save failed for %s", g.game_id)
+
+
+# ---------------------------------------------------------------------------
+# Catch missed games — games that went FINAL/LIVE without ever passing
+# through lock_and_predict_job while SCHEDULED (see module docstring).
+# ---------------------------------------------------------------------------
+
+def catch_missed_games_job():
+    """
+    Scans today's and yesterday's slate for both sports. Any game that's
+    FINAL or LIVE, has no prediction row yet, and isn't POSTPONED/TBD
+    gets a late prediction generated and saved with late_locked=True.
+
+    Yesterday is included (not just today) because the failure mode
+    this fixes is specifically games that were NEVER scanned while
+    SCHEDULED — a late-night final can still be sitting there
+    unpredicted the next morning otherwise.
+
+    Deliberately does NOT settle anything itself — it only creates the
+    missing prediction row. settle_job already re-scans every
+    unsettled prediction every SETTLE_CHECK_INTERVAL_MIN and will pick
+    this up on its own next tick, so there's no reason to duplicate
+    that logic here.
+    """
+    provider = _get_provider()
+
+    for sport in SPORTS:
+        for date_str in (_local_date_str(0), _local_date_str(-1)):
+            try:
+                games = provider.get_games_for_date(sport, date_str)
+            except Exception:
+                logger.exception(
+                    "catch_missed_games_job: get_games_for_date failed "
+                    "for %s %s", sport.value, date_str,
+                )
+                continue
+
+            for g in games:
+                if g.status not in _CATCHABLE_STATUSES:
+                    continue  # SCHEDULED is lock_and_predict_job's job;
+                              # POSTPONED/TBD have nothing to predict
+
+                if db.get_prediction(g.game_id):
+                    continue  # already predicted (normally or late) —
+                              # never overwrite an existing lock
+
+                try:
+                    context = provider.get_game_context(g.game_id, sport)
+                except Exception:
+                    logger.exception(
+                        "catch_missed_games_job: get_game_context "
+                        "failed for %s", g.game_id,
+                    )
+                    continue
+
+                try:
+                    pred = run_simulation(context, runs=None)
+                    pred.late_locked = True
+                    db.save_prediction(pred)
+                    logger.warning(
+                        "LATE-LOCKED prediction (missed while SCHEDULED): "
+                        "%s @ %s (%s, status=%s) — check why "
+                        "lock_and_predict_job never caught this one",
+                        g.away_team.name, g.home_team.name,
+                        g.game_id, g.status.value,
+                    )
+                except Exception:
+                    logger.exception(
+                        "catch_missed_games_job: prediction/save failed "
+                        "for %s", g.game_id,
+                    )
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +351,14 @@ def start_scheduler() -> BackgroundScheduler:
         coalesce=True,
     )
     _scheduler.add_job(
+        catch_missed_games_job,
+        trigger=IntervalTrigger(minutes=CATCH_MISSED_INTERVAL_MIN),
+        id="catch_missed_games",
+        next_run_time=datetime.now(LOCAL_TZ),
+        max_instances=1,
+        coalesce=True,
+    )
+    _scheduler.add_job(
         settle_job,
         trigger=IntervalTrigger(minutes=SETTLE_CHECK_INTERVAL_MIN),
         id="settle",
@@ -252,8 +368,10 @@ def start_scheduler() -> BackgroundScheduler:
     )
     _scheduler.start()
     logger.info(
-        "Scheduler started: lock/predict every %sm, settle every %sm",
-        LOCK_CHECK_INTERVAL_MIN, SETTLE_CHECK_INTERVAL_MIN,
+        "Scheduler started: lock/predict every %sm, catch-missed every "
+        "%sm, settle every %sm",
+        LOCK_CHECK_INTERVAL_MIN, CATCH_MISSED_INTERVAL_MIN,
+        SETTLE_CHECK_INTERVAL_MIN,
     )
     return _scheduler
 

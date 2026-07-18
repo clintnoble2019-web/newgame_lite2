@@ -47,6 +47,17 @@ KALSHI COLUMNS (2026-07-14):
     with-default column is always safe in SQLite). Old rows get the
     defaults ('' / 0.0); new predictions carry real values when a
     Kalshi market was matched.
+
+LATE_LOCKED COLUMN (2026-07-17):
+    One new column on predictions — late_locked (INTEGER, 0/1 as a
+    bool) — same safe additive ALTER pattern. Set to 1 only when
+    nexgame_scheduler.catch_missed_games_job() had to generate a
+    prediction for a game that was already FINAL/LIVE because
+    lock_and_predict_job never caught it while SCHEDULED (see that
+    job's docstring for why games slip through). Every prediction
+    made the normal way stays 0/False. This is what fixes games
+    silently never appearing in the settled history at all — see
+    nexgame_scheduler.py for the actual root-cause writeup.
 """
 
 import sqlite3
@@ -115,7 +126,8 @@ def init_db() -> None:
                 win_confidence      TEXT NOT NULL,
                 simulations_run     INTEGER NOT NULL,
                 generated_at        TEXT NOT NULL,
-                stored_at           TEXT NOT NULL
+                stored_at           TEXT NOT NULL,
+                late_locked         INTEGER NOT NULL DEFAULT 0
             );
             """
         )
@@ -178,6 +190,17 @@ def init_db() -> None:
         try:
             conn.execute("ALTER TABLE predictions ADD COLUMN "
                          "read_text TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass   # column already exists
+
+        # Migration: late_locked added 2026-07-17. Same safe additive
+        # pattern as pitching_matchup/read_text — nullable-with-default,
+        # no rebuild needed. Existing rows default to 0 (they were all
+        # locked the normal, pre-game way — this column didn't exist
+        # yet, so there's nothing to backfill).
+        try:
+            conn.execute("ALTER TABLE predictions ADD COLUMN "
+                         "late_locked INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass   # column already exists
 
@@ -257,7 +280,8 @@ def _migrate_sport_check() -> None:
                 simulations_run     INTEGER NOT NULL,
                 generated_at        TEXT NOT NULL,
                 stored_at           TEXT NOT NULL,
-                pitching_matchup    TEXT NOT NULL DEFAULT '{{}}'
+                pitching_matchup    TEXT NOT NULL DEFAULT '{{}}',
+                late_locked         INTEGER NOT NULL DEFAULT 0
             );
             """
         )
@@ -342,8 +366,9 @@ def save_prediction(pred) -> None:
                 score_low_away, score_med_away, score_high_away,
                 player_projections, confidence, win_confidence,
                 simulations_run, generated_at, stored_at, pitching_matchup,
-                kalshi_event_ticker, kalshi_home_prob, kalshi_away_prob
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                kalshi_event_ticker, kalshi_home_prob, kalshi_away_prob,
+                late_locked
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id) DO UPDATE SET
                 home_win_pct = excluded.home_win_pct,
                 away_win_pct = excluded.away_win_pct,
@@ -362,7 +387,8 @@ def save_prediction(pred) -> None:
                 pitching_matchup = excluded.pitching_matchup,
                 kalshi_event_ticker = excluded.kalshi_event_ticker,
                 kalshi_home_prob = excluded.kalshi_home_prob,
-                kalshi_away_prob = excluded.kalshi_away_prob
+                kalshi_away_prob = excluded.kalshi_away_prob,
+                late_locked = excluded.late_locked
             """,
             (
                 pred.game_id, _sport_value(pred.sport), pred.home_team, pred.away_team,
@@ -376,6 +402,7 @@ def save_prediction(pred) -> None:
                 getattr(pred, "kalshi_event_ticker", "") or "",
                 getattr(pred, "kalshi_home_prob", 0.0) or 0.0,
                 getattr(pred, "kalshi_away_prob", 0.0) or 0.0,
+                int(bool(getattr(pred, "late_locked", False))),
             ),
         )
 
