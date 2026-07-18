@@ -9,11 +9,20 @@ Two completely separate buyer populations, priced deliberately apart
         SEASON     -> $450, expires end of 2026 season
         LIFETIME   -> $900, never expires
 
-    B2C — Gumroad Discover strangers, monthly, matches full NexGame's
-    locked subscription pricing so today's Lite subscriber already
-    knows the price when they graduate to full NexGame in June 2027:
-        MONTHLY_BASIC -> $19.99/mo, recurring, billed by Gumroad
-        MONTHLY_PRO   -> $39.99/mo, recurring, billed by Gumroad
+    B2C — Whop, single product, three billing intervals:
+        MONTHLY    -> $39.99/mo, 7-day free trial
+        SEMIANNUAL -> $199.99 / 6 months
+        ANNUAL     -> $399.99 / year
+
+CHANGED 2026-07-18 per Clint: Whop REPLACES Gumroad entirely as the B2C
+billing processor. Chosen because Whop can act as merchant-of-record
+(sidesteps the high-risk-processor underwriting problem that blocked
+other launches this session) and natively supports free trials on
+recurring checkout links with zero custom billing code. The old
+Basic/Pro two-tier split is gone, replaced by three billing-INTERVAL
+options on one product (not a features split) — that also means the
+old UPGRADE_NUDGE lifecycle message (Basic->Pro features) no longer
+applies and has been removed; WIN_BACK still does.
 
 THE DECISION TREE THIS MODULE IMPLEMENTS:
 
@@ -23,15 +32,14 @@ THE DECISION TREE THIS MODULE IMPLEMENTS:
         season ended                   -> RENEWAL_PLEA
         (lifetime) new season released -> LIFETIME_THANKS
 
-    Tier = MONTHLY_BASIC or MONTHLY_PRO (B2C)
-        active, subscribed < 60 days           -> NONE
-        active, Basic, subscribed >= 60 days   -> UPGRADE_NUDGE (Basic->Pro only)
+    Tier = MONTHLY (B2C)
+        active                                  -> NONE
         just cancelled (<= 3 days ago)          -> WIN_BACK
         cancelled, already win-backed once      -> NONE (don't nag)
 
-Gumroad owns actual billing/renewal for Monthly tiers — this module
-only TRACKS status (fed by the Gumroad webhook, see gumroad_webhook.py)
-and decides what message, if any, a human should see.
+Whop owns actual billing/renewal for the Monthly tier — this module
+only TRACKS status (fed by the Whop webhook, see whop_webhook.py) and
+decides what message, if any, a human should see.
 """
 
 import sqlite3
@@ -50,7 +58,6 @@ CUSTOMERS_DB = os.environ.get("CUSTOMERS_DB_PATH", "nexgame_lite_customers.db")
 SEASON_END = date(2026, 11, 1)
 
 # ── Locked B2C behavior thresholds ───────────────────────────────────
-UPGRADE_NUDGE_AFTER_DAYS = 60   # Basic subscriber tenure before nudging Pro
 WIN_BACK_WINDOW_DAYS = 3        # send win-back only within N days of cancel
 
 
@@ -58,25 +65,32 @@ class Tier(Enum):
     # B2B — Contra, one-time
     SEASON = "season"                  # $450
     LIFETIME = "lifetime"              # $900
-    # B2C — Gumroad, monthly recurring
-    MONTHLY_BASIC = "monthly_basic"    # $19.99/mo
-    MONTHLY_PRO = "monthly_pro"        # $39.99/mo
+    # B2C — Whop, one product, three billing intervals
+    MONTHLY = "monthly"                # $39.99/mo, 7-day free trial
+    SEMIANNUAL = "semiannual"          # $199.99 / 6 months
+    ANNUAL = "annual"                  # $399.99 / year
 
 
 B2B_TIERS = (Tier.SEASON, Tier.LIFETIME)
-B2C_TIERS = (Tier.MONTHLY_BASIC, Tier.MONTHLY_PRO)
+B2C_TIERS = (Tier.MONTHLY, Tier.SEMIANNUAL, Tier.ANNUAL)
 
 TIER_PRICE = {
     Tier.SEASON: 450.00,
     Tier.LIFETIME: 900.00,
-    Tier.MONTHLY_BASIC: 19.99,
-    Tier.MONTHLY_PRO: 39.99,
+    Tier.MONTHLY: 39.99,
+    Tier.SEMIANNUAL: 199.99,
+    Tier.ANNUAL: 399.99,
 }
 
 
 class SubStatus(Enum):
-    """B2C only — Gumroad-reported subscription status."""
+    """B2C only — Whop-reported subscription status. TRIALING added
+    2026-07-18 for the 7-day free trial window Whop natively supports
+    on recurring checkout links — treat the same as ACTIVE for access
+    purposes, tracked separately only so lifecycle messaging can
+    eventually distinguish a trial user from a paying one if needed."""
     ACTIVE = "active"
+    TRIALING = "trialing"
     CANCELLED = "cancelled"
     PAST_DUE = "past_due"
     NA = "n/a"          # B2B customers — not a subscription, always n/a
@@ -89,7 +103,6 @@ class MessageAction(Enum):
     LIFETIME_THANKS = "lifetime_thanks"
     SEASON_ENDING_SOON = "season_ending_soon"
     # B2C
-    UPGRADE_NUDGE = "upgrade_nudge"
     WIN_BACK = "win_back"
 
 
@@ -100,13 +113,14 @@ class Customer:
     email: str
     tier: Tier
     purchased_at: str              # ISO date — B2C: original subscribe date
-    source: str = ""                # 'contra' | 'gumroad'
+    source: str = ""                # 'contra' | 'whop'
     contra_order_id: str = ""
-    gumroad_subscription_id: str = ""
-    license_key: str = ""           # login credential — Gumroad-issued (B2C)
-                                     # or manually assigned (B2B)
+    whop_subscription_id: str = ""
+    license_key: str = ""           # login credential — minted for both
+                                     # B2B (manual) and B2C (on first
+                                     # Whop membership.activated event)
     sub_status: SubStatus = SubStatus.NA
-    status_updated_at: str = ""     # last time Gumroad told us status changed
+    status_updated_at: str = ""     # last time Whop told us status changed
     win_back_sent: bool = False
     last_contacted_at: str = ""
     notes: str = ""
@@ -121,7 +135,7 @@ CREATE TABLE IF NOT EXISTS customers (
     purchased_at             TEXT NOT NULL,
     source                   TEXT,
     contra_order_id          TEXT,
-    gumroad_subscription_id  TEXT,
+    whop_subscription_id     TEXT,
     license_key              TEXT,
     sub_status               TEXT NOT NULL DEFAULT 'n/a',
     status_updated_at        TEXT,
@@ -157,7 +171,7 @@ def _row_to_customer(r) -> Customer:
         tier=Tier(r["tier"]), purchased_at=r["purchased_at"],
         source=r["source"] or "",
         contra_order_id=r["contra_order_id"] or "",
-        gumroad_subscription_id=r["gumroad_subscription_id"] or "",
+        whop_subscription_id=r["whop_subscription_id"] or "",
         license_key=r["license_key"] or "",
         sub_status=SubStatus(r["sub_status"] or "n/a"),
         status_updated_at=r["status_updated_at"] or "",
@@ -171,21 +185,32 @@ def add_customer(customer: Customer, path: str = None):
     B2B (season/lifetime): call manually after a Contra sale. If no
     license_key is given, one is generated so the customer has a login
     credential immediately.
-    B2C (monthly): call automatically from the Gumroad webhook on the
-    'sale' event — Gumroad supplies the license_key itself."""
-    status = (SubStatus.ACTIVE if customer.tier in B2C_TIERS
-              else SubStatus.NA)
+    B2C (monthly/semiannual/annual): call automatically from the Whop
+    webhook on 'membership.activated' — Whop doesn't hand us a
+    license_key the way Gumroad did, so one is minted here (same
+    _generate_license_key() path as B2B).
+
+    sub_status resolution: if the caller already set customer.sub_status
+    (webhook passes TRIALING for the 7-day free trial window), honor it.
+    Otherwise fall back to a sensible default per tier — ACTIVE for
+    B2C (paid, no trial), NA for B2B."""
+    if customer.sub_status != SubStatus.NA:
+        status = customer.sub_status
+    elif customer.tier in B2C_TIERS:
+        status = SubStatus.ACTIVE
+    else:
+        status = SubStatus.NA
     key = customer.license_key or _generate_license_key()
     with _db(path) as db:
         db.execute(
             """INSERT INTO customers
                (customer_id, name, email, tier, purchased_at, source,
-                contra_order_id, gumroad_subscription_id, license_key,
+                contra_order_id, whop_subscription_id, license_key,
                 sub_status, status_updated_at, notes)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (customer.customer_id, customer.name, customer.email,
              customer.tier.value, customer.purchased_at, customer.source,
-             customer.contra_order_id, customer.gumroad_subscription_id,
+             customer.contra_order_id, customer.whop_subscription_id,
              key, status.value,
              datetime.now(timezone.utc).isoformat(timespec="seconds"),
              customer.notes))
@@ -193,8 +218,9 @@ def add_customer(customer: Customer, path: str = None):
 
 
 def _generate_license_key() -> str:
-    """B2B customers don't come with a Gumroad-issued key, so we mint
-    one in the same visual format buyers are used to seeing."""
+    """Neither B2B (Contra) nor B2C (Whop) customers come with a
+    ready-made key from the payment processor, so we mint one in a
+    consistent visual format buyers are used to seeing."""
     import secrets
     groups = ["".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
                       for _ in range(4)) for _ in range(4)]
@@ -209,11 +235,11 @@ def get_customer(customer_id: str, path: str = None) -> Customer | None:
     return _row_to_customer(row) if row else None
 
 
-def get_by_gumroad_subscription(sub_id: str, path: str = None) -> Customer | None:
-    """Lookup used by the Gumroad webhook to find who a status event is for."""
+def get_by_whop_subscription(sub_id: str, path: str = None) -> Customer | None:
+    """Lookup used by the Whop webhook to find who a status event is for."""
     with _db(path) as db:
         row = db.execute(
-            "SELECT * FROM customers WHERE gumroad_subscription_id = ?",
+            "SELECT * FROM customers WHERE whop_subscription_id = ?",
             (sub_id,)).fetchone()
     return _row_to_customer(row) if row else None
 
@@ -234,13 +260,15 @@ def has_active_access(customer: Customer, today: date = None) -> bool:
     """Gate check: does this customer currently have paid access?
     B2B Season: only while before SEASON_END.
     B2B Lifetime: always.
-    B2C: only while sub_status is ACTIVE (Gumroad billing owns this)."""
+    B2C: ACTIVE or TRIALING (Whop billing owns the actual state —
+    trialing customers get full access during the 7-day free trial,
+    same as paying ones)."""
     today = today or date.today()
     if customer.tier == Tier.LIFETIME:
         return True
     if customer.tier == Tier.SEASON:
         return today <= SEASON_END
-    return customer.sub_status == SubStatus.ACTIVE
+    return customer.sub_status in (SubStatus.ACTIVE, SubStatus.TRIALING)
 
 
 def all_customers(path: str = None) -> list[Customer]:
@@ -250,15 +278,15 @@ def all_customers(path: str = None) -> list[Customer]:
 
 
 def update_sub_status(customer_id: str, status: SubStatus, path: str = None):
-    """Called by the Gumroad webhook when a subscription changes state
-    (renewed, cancelled, payment failed). Resets win_back_sent when a
-    cancelled customer resubscribes, so a future cancel gets a fresh
-    win-back message."""
+    """Called by the Whop webhook when a subscription changes state
+    (activated, trial started, cancelled, payment failed). Resets
+    win_back_sent when a cancelled customer resubscribes, so a future
+    cancel gets a fresh win-back message."""
     with _db(path) as db:
         db.execute(
             """UPDATE customers
                SET sub_status = ?, status_updated_at = ?,
-                   win_back_sent = CASE WHEN ? = 'active' THEN 0
+                   win_back_sent = CASE WHEN ? IN ('active', 'trialing') THEN 0
                                         ELSE win_back_sent END
                WHERE customer_id = ?""",
             (status.value,
@@ -307,7 +335,7 @@ def determine_action(customer: Customer, today: date = None) -> MessageAction:
             return MessageAction.SEASON_ENDING_SOON
         return MessageAction.NONE
 
-    # ── B2C branch: Monthly Basic / Pro (Gumroad) ───────────────────
+    # ── B2C branch: Monthly (Whop) ───────────────────────────────────
     if customer.sub_status == SubStatus.CANCELLED:
         if customer.win_back_sent:
             return MessageAction.NONE
@@ -316,14 +344,8 @@ def determine_action(customer: Customer, today: date = None) -> MessageAction:
             return MessageAction.WIN_BACK
         return MessageAction.NONE   # missed the window, don't nag later
 
-    if customer.sub_status == SubStatus.ACTIVE:
-        if customer.tier == Tier.MONTHLY_BASIC:
-            subscribed_at = _parse_date(customer.purchased_at, today)
-            if (today - subscribed_at).days >= UPGRADE_NUDGE_AFTER_DAYS:
-                return MessageAction.UPGRADE_NUDGE
-        return MessageAction.NONE
-
-    return MessageAction.NONE   # past_due — Gumroad handles retry/dunning
+    return MessageAction.NONE   # active, trialing, or past_due — Whop
+                                # handles retry/dunning on its own
 
 
 def _parse_date(iso_str: str, fallback: date) -> date:
@@ -383,21 +405,6 @@ when the next season begins.
 """
 
 # ── Message templates — B2C ─────────────────────────────────────────
-UPGRADE_NUDGE_TEMPLATE = """\
-Subject: You've been with NexGame Lite for 2 months — see what Pro unlocks
-
-Hi {name},
-
-You've been on Basic ($19.99/mo) for about two months now. Pro
-($39.99/mo) adds breakout alerts and full historical prediction
-archive access — the stuff serious users end up wanting most.
-
-Upgrade any time from your Gumroad subscription — no new purchase,
-just a plan change.
-
-— Clint, Kage Software
-"""
-
 WIN_BACK_TEMPLATE = """\
 Subject: Sorry to see you go — quick question
 
@@ -429,8 +436,6 @@ def build_message(customer: Customer, action: MessageAction,
         return SEASON_ENDING_SOON_TEMPLATE.format(
             name=customer.name, days_left=days_left,
             season_end=SEASON_END.isoformat())
-    if action == MessageAction.UPGRADE_NUDGE:
-        return UPGRADE_NUDGE_TEMPLATE.format(name=customer.name)
     if action == MessageAction.WIN_BACK:
         return WIN_BACK_TEMPLATE.format(name=customer.name)
     return ""
@@ -442,7 +447,7 @@ def run_lifecycle_check(path: str = None, today: date = None,
     Walk every customer (B2B and B2C alike), determine their action,
     build their message. dry_run=True (default): preview only, sends
     and marks nothing. Flip dry_run=False once wired to real sending
-    (SES for B2B, or Gumroad's own email tools for B2C).
+    (SES for B2B, or Whop's own email tools for B2C).
     """
     today = today or date.today()
     out = []

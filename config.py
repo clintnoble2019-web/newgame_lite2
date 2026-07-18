@@ -104,10 +104,6 @@ LEAGUE_AVG_OBP = 0.320
 LEAGUE_AVG_WHIP = 1.30
 LEAGUE_AVG_ERA = 4.20
 PITCH_COUNT_PULL = 95           # starter pulled around this pitch count
-MLB_BULLPEN_SAMPLE_MAX = 10     # cap on relievers sampled per team when
-                                 # hydrating real bullpen ERA/WHIP/K9 —
-                                 # bounds the extra season_stats calls
-                                 # per prediction (see _hydrate_bullpen_stats)
 PITCHES_PER_PA = 3.9            # league average pitches per plate appearance
 
 # Hit type distribution baseline (tuned by player SLG in engine)
@@ -165,10 +161,22 @@ DB_PATH = os.environ.get("DB_PATH", "nexgame_lite.db")
 LIVE_POLL_SECONDS = 60          # live score ticker refresh
 TOP_PLAYERS_SHOWN = 5           # top N players per team in prediction view
 
-# ── Gumroad (B2C billing) ─────────────────────────────────────────────
-# HMAC secret Gumroad signs webhook pings with — set once you configure
-# the Ping endpoint in Gumroad Settings > Advanced.
-GUMROAD_WEBHOOK_SECRET = ""
+# ── Whop (B2C billing) ─────────────────────────────────────────────────
+# REPLACES Gumroad entirely (2026-07-18). Standard Webhooks secret Whop
+# shows you ONCE at webhook creation (Dashboard > Developer > Create
+# Webhook) — format is "whsec_xxxxx". Copy it here immediately, it's
+# not re-shown later (you'd have to roll it and update every consumer).
+WHOP_WEBHOOK_SECRET = ""
+
+# The checkout links for each billing interval (7-day free trial
+# configured on the monthly plan itself in Whop's dashboard, not
+# passed as a URL param — confirm at launch whether it's monthly-only
+# or applies to all three). Create at: Whop Dashboard > Checkout
+# Links > + Create Checkout Link, one per plan. Used by the landing
+# page's three pricing cards.
+WHOP_CHECKOUT_URL_MONTHLY = ""      # $39.99/mo
+WHOP_CHECKOUT_URL_SEMIANNUAL = ""   # $199.99 / 6 months
+WHOP_CHECKOUT_URL_ANNUAL = ""       # $399.99 / year
 
 # ── Auth ─────────────────────────────────────────────────────────────
 # Signs session cookies. MUST be set to a real random value before

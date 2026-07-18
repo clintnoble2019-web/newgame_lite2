@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NexGame Lite — Monte Carlo Sports Predictions</title>
+<style>
+  :root {
+    --bg: #0D0D0D; --panel: #161616; --card: #1E1E1E;
+    --accent: #00E5FF; --gold: #FFD700; --green: #00FF88;
+    --red: #FF5566; --text: #CCCCCC; --dim: #888888;
+    --border: #2A2A2A;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; line-height: 1.5; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+  a { color: inherit; }
+
+  nav { display: flex; justify-content: space-between; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--border); }
+  .logo { font-size: 20px; font-weight: 700; color: #fff; letter-spacing: 0.5px; }
+  .logo span { color: var(--accent); }
+  .login-link { font-size: 14px; color: var(--dim); text-decoration: none; border: 1px solid var(--border); padding: 8px 16px; border-radius: 6px; }
+  .login-link:hover { border-color: var(--accent); color: var(--accent); }
+
+  .hero { text-align: center; padding: 80px 0 60px; }
+  .hero h1 { font-size: 40px; color: #fff; margin-bottom: 16px; line-height: 1.25; }
+  .hero h1 span { color: var(--accent); }
+  .hero p { font-size: 17px; color: var(--dim); max-width: 600px; margin: 0 auto 32px; }
+  .cta-primary { display: inline-block; background: var(--accent); color: #041014; font-weight: 700; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; }
+  .cta-sub { font-size: 13px; color: var(--dim); margin-top: 12px; }
+
+  .stats-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding: 32px 0; }
+  .stat-box { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; text-align: center; }
+  .stat-box .num { font-size: 28px; font-weight: 700; color: var(--accent); }
+  .stat-box .label { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+  .stat-note { text-align: center; font-size: 13px; color: var(--dim); padding-bottom: 40px; }
+  .stat-note a { color: var(--accent); text-decoration: none; }
+
+  .section-title { font-size: 26px; color: #fff; text-align: center; margin-bottom: 8px; }
+  .section-sub { text-align: center; color: var(--dim); margin-bottom: 40px; font-size: 15px; }
+
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding-bottom: 70px; }
+  .feature { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 24px; }
+  .feature h3 { color: #fff; font-size: 16px; margin-bottom: 8px; }
+  .feature p { font-size: 14px; color: var(--dim); }
+
+  .pricing { padding-bottom: 80px; }
+  .pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .plan { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 32px 24px; text-align: center; position: relative; }
+  .plan.featured { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .plan .tag { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #041014; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 20px; letter-spacing: 0.5px; }
+  .plan h3 { color: #fff; font-size: 16px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .plan .price { font-size: 36px; font-weight: 700; color: #fff; }
+  .plan .price span { font-size: 14px; color: var(--dim); font-weight: 400; }
+  .plan .save { font-size: 13px; color: var(--green); margin-top: 6px; min-height: 18px; }
+  .plan .trial-note { font-size: 12px; color: var(--gold); margin: 12px 0; min-height: 16px; }
+  .plan a { display: block; background: var(--border); color: #fff; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: 600; margin-top: 16px; }
+  .plan.featured a { background: var(--accent); color: #041014; }
+  .plan a:hover { opacity: 0.9; }
+
+  footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; font-size: 12px; color: var(--dim); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <nav>
+    <div class="logo">NEXGAME <span>LITE</span></div>
+    <a href="/login" class="login-link">Log In</a>
+  </nav>
+
+  <div class="hero">
+    <h1>Monte Carlo predictions.<br><span>10,000 simulations</span> per game.</h1>
+    <p>MLB, NBA, WNBA, and CS2 predictions built on real simulation, not gut feel — with a public, auditable accuracy record you can check before you ever pay for anything.</p>
+    <a href="#pricing" class="cta-primary">Start Your 7-Day Free Trial</a>
+    <div class="cta-sub">No charge until day 8. Cancel anytime.</div>
+  </div>
+
+  <div class="stats-strip" id="stats-strip">
+    <div class="stat-box"><div class="num" id="stat-winloss">—</div><div class="label">Win/Loss Accuracy</div></div>
+    <div class="stat-box"><div class="num" id="stat-range">—</div><div class="label">Score Range Accuracy</div></div>
+    <div class="stat-box"><div class="num" id="stat-totals">—</div><div class="label">Player Totals (±20%)</div></div>
+    <div class="stat-box"><div class="num" id="stat-sims">10,000</div><div class="label">Simulations / Game</div></div>
+  </div>
+  <div class="stat-note">Live numbers, pulled straight from our own settled-game history. <a href="/api/accuracy" target="_blank">View the raw data →</a></div>
+
+  <div class="section-title">How it works</div>
+  <div class="section-sub">Same engine behind every prediction, every sport.</div>
+  <div class="features">
+    <div class="feature">
+      <h3>Real matchup data</h3>
+      <p>Confirmed starting pitchers, rotation averages when unconfirmed, live team and player stats pulled fresh for every slate.</p>
+    </div>
+    <div class="feature">
+      <h3>10,000-run simulation</h3>
+      <p>Every game gets its own Monte Carlo run — win probability, predicted score range, and player projections all come out of the same model.</p>
+    </div>
+    <div class="feature">
+      <h3>Public, settled track record</h3>
+      <p>Every prediction gets graded against the real final score automatically. Nothing's cherry-picked — the accuracy dashboard above is the same one we look at.</p>
+    </div>
+  </div>
+
+  <div class="pricing" id="pricing">
+    <div class="section-title">Pick your plan</div>
+    <div class="section-sub">Same access, three ways to pay for it.</div>
+    <div class="pricing-grid">
+      <div class="plan">
+        <h3>Monthly</h3>
+        <div class="price">$39.99<span>/mo</span></div>
+        <div class="save">&nbsp;</div>
+        <div class="trial-note">7-day free trial</div>
+        <a href="#" id="checkout-monthly">Start Free Trial</a>
+      </div>
+      <div class="plan featured">
+        <div class="tag">BEST VALUE</div>
+        <h3>6 Months</h3>
+        <div class="price">$199.99<span>/6mo</span></div>
+        <div class="save">Save $39.95 vs monthly</div>
+        <div class="trial-note">&nbsp;</div>
+        <a href="#" id="checkout-semiannual">Subscribe</a>
+      </div>
+      <div class="plan">
+        <h3>Annual</h3>
+        <div class="price">$399.99<span>/yr</span></div>
+        <div class="save">Save $79.89 vs monthly</div>
+        <div class="trial-note">&nbsp;</div>
+        <a href="#" id="checkout-annual">Subscribe</a>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    NexGame Lite &middot; Kage Software &middot; Predictions are probabilistic, not guaranteed &middot; <a href="/login">Existing customer? Log in</a>
+  </footer>
+</div>
+
+<script>
+// CHECKOUT LINKS — paste your real Whop checkout links here once
+// created (Whop Dashboard > Checkout Links > + Create Checkout Link,
+// one per plan). Placeholder "#" links do nothing until filled in.
+document.getElementById('checkout-monthly').href = 'PASTE_MONTHLY_CHECKOUT_LINK_HERE';
+document.getElementById('checkout-semiannual').href = 'PASTE_SEMIANNUAL_CHECKOUT_LINK_HERE';
+document.getElementById('checkout-annual').href = 'PASTE_ANNUAL_CHECKOUT_LINK_HERE';
+
+// Live accuracy stats — /api/accuracy is PUBLIC (no login required),
+// same endpoint the logged-in dashboard's Accuracy tab uses.
+fetch('/api/accuracy')
+  .then(r => r.json())
+  .then(data => {
+    const o = data.overall || {};
+    document.getElementById('stat-winloss').textContent =
+      o.win_loss_pct != null ? o.win_loss_pct.toFixed(1) + '%' : '—';
+    document.getElementById('stat-range').textContent =
+      o.score_range_pct != null ? o.score_range_pct.toFixed(1) + '%' : '—';
+    document.getElementById('stat-totals').textContent =
+      o.player_total_pct != null ? o.player_total_pct.toFixed(1) + '%' : '—';
+  })
+  .catch(() => {
+    // Leave the em-dashes in place rather than showing an error —
+    // this is a marketing page, a stat-fetch failure shouldn't look
+    // broken to a visitor deciding whether to trust the product.
+  });
+</script>
+
+</body>
+</html>

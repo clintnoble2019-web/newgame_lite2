@@ -64,7 +64,7 @@ from ingest.base import get_provider
 from engine.aggregate import run_simulation
 from settle.pipeline import settle_game
 from db import database as db
-from gumroad_webhook import router as gumroad_router
+from whop_webhook import router as whop_router
 
 app = FastAPI(title="NexGame Lite", version="1.0")
 @app.on_event("startup")
@@ -73,7 +73,7 @@ def _on_startup():
 db.init_db()
 cust.init_db()
 provider = get_provider()
-app.include_router(gumroad_router)
+app.include_router(whop_router)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -105,7 +105,12 @@ def require_customer(request: Request) -> cust.Customer:
 def index(request: Request):
     token = request.cookies.get(auth.SESSION_COOKIE_NAME, "")
     if not auth.get_current_customer(token):
-        return RedirectResponse("/login")
+        # CHANGED 2026-07-18: used to redirect straight to /login,
+        # skipping any chance to actually sell the product to a new
+        # visitor. Now shows the public marketing/pricing page instead
+        # — /login stays as its own page for RETURNING customers
+        # (linked from the landing page's nav).
+        return FileResponse(os.path.join(STATIC_DIR, "landing.html"))
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 
