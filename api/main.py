@@ -147,13 +147,42 @@ async def capture_lead(request: Request):
         # or someone trying to jam the DB. Not a real user.
         raise HTTPException(400, "Please enter a valid email address.")
 
-    cust.save_lead(
+    utm_source = (body.get("utm_source") or "")[:64]
+    utm_campaign = (body.get("utm_campaign") or "")[:64]
+
+    is_new = cust.save_lead(
         email=email,
         source=body.get("source") or "landing_popup",
-        utm_source=(body.get("utm_source") or "")[:64],
+        utm_source=utm_source,
         utm_medium=(body.get("utm_medium") or "")[:64],
-        utm_campaign=(body.get("utm_campaign") or "")[:64],
+        utm_campaign=utm_campaign,
     )
+
+    # Notify on genuinely new leads only — a returning visitor
+    # re-submitting the same email shouldn't buzz your phone.
+    if is_new:
+        try:
+            import pushover
+            total = cust.lead_count()
+            utm_tag = ""
+            if utm_source or utm_campaign:
+                utm_tag = f"\nvia {utm_source or '?'}"
+                if utm_campaign:
+                    utm_tag += f" / {utm_campaign}"
+            pushover.notify(
+                title=f"New NexGame Lite lead ({total} total)",
+                message=f"{email}{utm_tag}",
+            )
+        except Exception:
+            # Notification failure MUST NOT break lead capture. The
+            # lead is already safely in the DB by this point — we
+            # just log and move on. pushover.notify handles its own
+            # failures, this except is belt-and-suspenders in case an
+            # import or unrelated error somehow gets in.
+            import logging
+            logging.getLogger(__name__).exception(
+                "Lead notify failed (lead itself was saved)")
+
     # Deliberately returning the same response whether the email was
     # new or a repeat — the visitor doesn't need to know either way,
     # and a "you're already on the list" leak lets someone probe.
