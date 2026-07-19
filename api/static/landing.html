@@ -65,11 +65,13 @@
     width: calc(100% - 32px); position: relative; text-align: center;
   }
   .modal .close {
-    position: absolute; top: 12px; right: 16px; background: none;
-    border: none; color: var(--dim); font-size: 22px; cursor: pointer;
-    padding: 4px 8px; line-height: 1;
+    position: absolute; top: 8px; right: 8px; background: none;
+    border: none; color: var(--text); font-size: 28px; cursor: pointer;
+    line-height: 1; width: 44px; height: 44px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 6px;
   }
-  .modal .close:hover { color: var(--text); }
+  .modal .close:hover { background: var(--card); color: #fff; }
   .modal h3 { color: #fff; font-size: 22px; margin-bottom: 10px; }
   .modal p { color: var(--dim); font-size: 14px; margin-bottom: 20px; }
   .modal input[type=email] {
@@ -87,6 +89,12 @@
   .modal button.submit:hover { opacity: 0.9; }
   .modal button.submit:disabled { opacity: 0.5; cursor: default; }
   .modal .fine-print { font-size: 11px; color: var(--dim); margin-top: 12px; }
+  .modal .dismiss-link {
+    display: block; margin: 12px auto 0; background: none; border: none;
+    color: var(--dim); font-size: 13px; text-decoration: underline;
+    cursor: pointer; padding: 8px 12px; font-family: inherit;
+  }
+  .modal .dismiss-link:hover { color: var(--text); }
   .modal .success { color: var(--green); font-size: 15px; padding: 12px 0; }
   .modal .error { color: var(--red); font-size: 13px; margin-top: 8px; }
 </style>
@@ -171,17 +179,20 @@ fetch('/api/accuracy')
   });
 
 // ── Opt-in popup ────────────────────────────────────────────────────
-// Fires 15s after page load. Suppressed for 30 days once the visitor
-// has either submitted or explicitly closed it (localStorage flag) —
-// so returning ad clickers aren't pestered.
+// Fires 15s after page load. Suppressed ONLY after a successful email
+// submission — closing/dismissing the popup does not suppress future
+// showings. Every page load re-triggers until the visitor opts in.
+// Aggressive by design (per Clint 2026-07-19): the popup is the whole
+// point of the marketing page, dismissal shouldn't kill it forever.
 (function() {
-  const STORAGE_KEY = 'nexgamelite_popup_seen_v1';
-  const SUPPRESS_DAYS = 30;
+  const OPTED_IN_KEY = 'nexgamelite_opted_in_v1';
   const FIRE_AFTER_MS = 15000;
 
-  const seen = localStorage.getItem(STORAGE_KEY);
-  if (seen && (Date.now() - parseInt(seen, 10)) < SUPPRESS_DAYS * 86400000) {
-    return;   // already dismissed within the suppression window
+  // Only suppress the popup if this browser has ALREADY successfully
+  // opted in. No "dismissed" state — closing without opting in leaves
+  // the flag unset, so the popup fires again next page load.
+  if (localStorage.getItem(OPTED_IN_KEY)) {
+    return;
   }
 
   // UTM capture — comes from ?utm_source=whop&utm_campaign=xyz on the
@@ -202,13 +213,15 @@ fetch('/api/accuracy')
   const formWrap = document.getElementById('lead-form-wrap');
   const successWrap = document.getElementById('lead-success-wrap');
 
-  function markSeen() {
-    localStorage.setItem(STORAGE_KEY, Date.now().toString());
+  function markOptedIn() {
+    localStorage.setItem(OPTED_IN_KEY, Date.now().toString());
   }
 
   function close() {
     modal.classList.remove('show');
-    markSeen();
+    // DELIBERATELY NOT setting the opted-in flag here — closing without
+    // opting in leaves the flag unset, so the popup fires again on the
+    // visitor's next page load.
   }
 
   function open() {
@@ -217,6 +230,8 @@ fetch('/api/accuracy')
   }
 
   closeBtn.addEventListener('click', close);
+  const dismissBtn = document.getElementById('lead-dismiss');
+  if (dismissBtn) dismissBtn.addEventListener('click', close);
   modal.addEventListener('click', (e) => {
     if (e.target === modal) close();   // click backdrop, not the modal itself
   });
@@ -255,7 +270,7 @@ fetch('/api/accuracy')
       }
       formWrap.style.display = 'none';
       successWrap.style.display = 'block';
-      markSeen();
+      markOptedIn();
     } catch (err) {
       errorDiv.textContent = err.message;
       errorDiv.style.display = 'block';
@@ -280,6 +295,7 @@ fetch('/api/accuracy')
       <input type="email" id="lead-email" placeholder="you@example.com" autocomplete="email">
       <button class="submit" id="lead-submit">Send me today's picks</button>
       <div class="error" id="lead-error" style="display:none"></div>
+      <button type="button" class="dismiss-link" id="lead-dismiss">No thanks, close this</button>
       <div class="fine-print">By subscribing you agree to receive marketing emails. Cancel anytime.</div>
     </div>
     <div id="lead-success-wrap" style="display:none">
