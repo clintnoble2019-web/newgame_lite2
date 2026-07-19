@@ -77,6 +77,18 @@ import config
 
 DB_PATH = config.DB_PATH
 
+# Fix 2026-07-19: sqlite3.connect() can create the .db FILE itself if
+# missing, but NOT a missing parent directory — confirmed live crash:
+# "sqlite3.OperationalError: unable to open database file" the moment
+# DB_PATH was pointed at a freshly-attached Railway Volume mount path
+# (/app/data/nexgame_lite.db). The volume mounts fine; this just makes
+# sure the directory component of DB_PATH actually exists before any
+# connection is attempted, regardless of whether that's a fresh volume
+# or a plain relative filename (os.path.dirname("") is "", and
+# makedirs on an empty string is a safe no-op).
+if os.path.dirname(DB_PATH):
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
 # One place to grow the allowed-sport list from now on. The CREATE
 # TABLE below and the migration both derive from this.
 ALLOWED_SPORTS = ("MLB", "NBA", "WNBA", "CS2")

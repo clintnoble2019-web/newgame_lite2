@@ -52,6 +52,12 @@ import config
 
 import os
 CUSTOMERS_DB = os.environ.get("CUSTOMERS_DB_PATH", "nexgame_lite_customers.db")
+# Same fix as db/database.py — sqlite3.connect() won't create a missing
+# parent directory on its own, which crashes the app the moment this
+# path points at a freshly-mounted Volume rather than a plain relative
+# filename. Safe no-op for the plain-filename case (empty dirname).
+if os.path.dirname(CUSTOMERS_DB):
+    os.makedirs(os.path.dirname(CUSTOMERS_DB), exist_ok=True)
 
 # ── Locked season boundary (B2B) ─────────────────────────────────────
 # Update this each year once next season's calendar is confirmed.
