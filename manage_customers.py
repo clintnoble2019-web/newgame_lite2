@@ -26,6 +26,7 @@ Usage:
     python manage_customers.py check                         (dry run)
     python manage_customers.py check --send                  (mark contacted)
     python manage_customers.py upgrade <id> monthly|semiannual|annual
+    python manage_customers.py reset-key <id>
 """
 
 import argparse
@@ -133,6 +134,22 @@ def cmd_upgrade(args):
     print(f"✓ {args.customer_id} moved to {new_tier.value}")
 
 
+def cmd_reset_key(args):
+    """Fixes 'customer says login fails' without deleting/recreating
+    them — list doesn't print existing keys back out on purpose, so
+    this is the actual troubleshooting path."""
+    cust.init_db()
+    new_key = cust.reset_license_key(args.customer_id)
+    if new_key is None:
+        print(f"No customer found with id {args.customer_id!r} — "
+             f"check 'python manage_customers.py list' for the real id.")
+        return
+    print(f"\n✓ New license key generated for {args.customer_id} "
+         f"— the old one no longer works.")
+    print(f"    License Key: {new_key}")
+    print(f"    Login at:    https://nexgamelite.com/login")
+
+
 def main():
     ap = argparse.ArgumentParser(description="NexGame Lite customer admin")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -151,9 +168,13 @@ def main():
     p_up.add_argument("customer_id")
     p_up.add_argument("new_tier", choices=["monthly", "semiannual", "annual"])
 
+    p_reset = sub.add_parser("reset-key",
+        help="Mint a fresh license key (fixes 'login doesn't work' reports)")
+    p_reset.add_argument("customer_id")
+
     args = ap.parse_args()
     {"add": cmd_add, "list": cmd_list, "check": cmd_check,
-     "upgrade": cmd_upgrade}[args.cmd](args)
+     "upgrade": cmd_upgrade, "reset-key": cmd_reset_key}[args.cmd](args)
 
 
 if __name__ == "__main__":

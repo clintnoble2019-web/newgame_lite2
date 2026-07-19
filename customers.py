@@ -365,10 +365,29 @@ def update_sub_status(customer_id: str, status: SubStatus, path: str = None):
 
 
 def upgrade_tier(customer_id: str, new_tier: Tier, path: str = None):
-    """Basic -> Pro upgrade (or any tier change)."""
+    """Change a customer's tier (any tier -> any tier)."""
     with _db(path) as db:
         db.execute("UPDATE customers SET tier = ? WHERE customer_id = ?",
                    (new_tier.value, customer_id))
+
+
+def reset_license_key(customer_id: str, path: str = None) -> str | None:
+    """Mint a fresh license key for an existing customer and return it.
+    Added 2026-07-19 — there was previously no way to recover from a
+    'customer says login fails' report other than deleting and
+    recreating the whole record, since list/all_customers deliberately
+    never print an existing key back out (it's a credential, not
+    something to display casually). This is the actual fix: generate
+    a new one, hand it to the customer, done — the old key stops
+    working the instant this runs. Returns None if customer_id
+    doesn't exist."""
+    if get_customer(customer_id, path) is None:
+        return None
+    new_key = _generate_license_key()
+    with _db(path) as db:
+        db.execute("UPDATE customers SET license_key = ? "
+                   "WHERE customer_id = ?", (new_key, customer_id))
+    return new_key
 
 
 def _mark_contacted(customer_id: str, action: MessageAction, path: str = None):
