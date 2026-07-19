@@ -50,6 +50,45 @@
   .cta-block .price-line b { color: var(--text); font-weight: 600; }
 
   footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; font-size: 12px; color: var(--dim); }
+
+  /* Opt-in popup */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000; opacity: 0; pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .modal-backdrop.show { opacity: 1; pointer-events: auto; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 36px 32px; max-width: 440px;
+    width: calc(100% - 32px); position: relative; text-align: center;
+  }
+  .modal .close {
+    position: absolute; top: 12px; right: 16px; background: none;
+    border: none; color: var(--dim); font-size: 22px; cursor: pointer;
+    padding: 4px 8px; line-height: 1;
+  }
+  .modal .close:hover { color: var(--text); }
+  .modal h3 { color: #fff; font-size: 22px; margin-bottom: 10px; }
+  .modal p { color: var(--dim); font-size: 14px; margin-bottom: 20px; }
+  .modal input[type=email] {
+    width: 100%; padding: 12px 14px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-size: 15px; font-family: inherit;
+    margin-bottom: 12px;
+  }
+  .modal input[type=email]:focus { outline: none; border-color: var(--accent); }
+  .modal button.submit {
+    width: 100%; background: var(--accent); color: #041014;
+    border: none; padding: 12px; border-radius: 6px; font-weight: 700;
+    font-size: 15px; cursor: pointer; font-family: inherit;
+  }
+  .modal button.submit:hover { opacity: 0.9; }
+  .modal button.submit:disabled { opacity: 0.5; cursor: default; }
+  .modal .fine-print { font-size: 11px; color: var(--dim); margin-top: 12px; }
+  .modal .success { color: var(--green); font-size: 15px; padding: 12px 0; }
+  .modal .error { color: var(--red); font-size: 13px; margin-top: 8px; }
 </style>
 <script>
 !function(w,d,s,u,n,a,b){if(w[n])return;a=w[n]={q:[],t:+new Date,s:[],o:u,track:function(){a.q.push([+new Date].concat([].slice.call(arguments)))},setScope:function(){a.s=[].slice.call(arguments).filter(function(x){return typeof x==="string"});a.q.push([+new Date,"setScope"].concat(a.s))},scope:function(){var c=[].slice.call(arguments);return{track:function(){a.q.push([+new Date].concat([].slice.call(arguments)).concat([{__scope:c}]))}}}};b=d.createElement(s);b.async=1;b.src=u+"/s.js";d.getElementsByTagName(s)[0].parentNode.insertBefore(b,d.getElementsByTagName(s)[0])}(window,document,"script","https://t.whop.tw","whop");whop.setScope("biz_mNn7NSmrOxVAl7");whop.track("page");whop.track("pixel");
@@ -130,7 +169,127 @@ fetch('/api/accuracy')
     // this is a marketing page, a stat-fetch failure shouldn't look
     // broken to a visitor deciding whether to trust the product.
   });
+
+// ── Opt-in popup ────────────────────────────────────────────────────
+// Fires 15s after page load. Suppressed for 30 days once the visitor
+// has either submitted or explicitly closed it (localStorage flag) —
+// so returning ad clickers aren't pestered.
+(function() {
+  const STORAGE_KEY = 'nexgamelite_popup_seen_v1';
+  const SUPPRESS_DAYS = 30;
+  const FIRE_AFTER_MS = 15000;
+
+  const seen = localStorage.getItem(STORAGE_KEY);
+  if (seen && (Date.now() - parseInt(seen, 10)) < SUPPRESS_DAYS * 86400000) {
+    return;   // already dismissed within the suppression window
+  }
+
+  // UTM capture — comes from ?utm_source=whop&utm_campaign=xyz on the
+  // ad link, then rides along in the /api/leads POST so the DB row
+  // attributes to whichever ad drove the visit.
+  const params = new URLSearchParams(window.location.search);
+  const utm = {
+    source: params.get('utm_source') || '',
+    medium: params.get('utm_medium') || '',
+    campaign: params.get('utm_campaign') || '',
+  };
+
+  const modal = document.getElementById('lead-modal');
+  const closeBtn = document.getElementById('lead-modal-close');
+  const emailInput = document.getElementById('lead-email');
+  const submitBtn = document.getElementById('lead-submit');
+  const errorDiv = document.getElementById('lead-error');
+  const formWrap = document.getElementById('lead-form-wrap');
+  const successWrap = document.getElementById('lead-success-wrap');
+
+  function markSeen() {
+    localStorage.setItem(STORAGE_KEY, Date.now().toString());
+  }
+
+  function close() {
+    modal.classList.remove('show');
+    markSeen();
+  }
+
+  function open() {
+    modal.classList.add('show');
+    setTimeout(() => emailInput.focus(), 100);
+  }
+
+  closeBtn.addEventListener('click', close);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) close();   // click backdrop, not the modal itself
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.classList.contains('show')) close();
+  });
+
+  emailInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitBtn.click();
+  });
+
+  submitBtn.addEventListener('click', async () => {
+    const email = emailInput.value.trim();
+    if (!email || !email.includes('@')) {
+      errorDiv.textContent = 'Please enter a valid email.';
+      errorDiv.style.display = 'block';
+      return;
+    }
+    errorDiv.style.display = 'none';
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Sending...';
+    try {
+      const r = await fetch('/api/leads', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          email: email,
+          utm_source: utm.source,
+          utm_medium: utm.medium,
+          utm_campaign: utm.campaign,
+        }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.detail || 'Something went wrong.');
+      }
+      formWrap.style.display = 'none';
+      successWrap.style.display = 'block';
+      markSeen();
+    } catch (err) {
+      errorDiv.textContent = err.message;
+      errorDiv.style.display = 'block';
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Send me today\'s picks';
+    }
+  });
+
+  setTimeout(open, FIRE_AFTER_MS);
+})();
 </script>
+
+<!-- Opt-in popup — fires 15s after landing (see script below). Hidden
+     by default via .modal-backdrop's opacity 0 / pointer-events none;
+     .show class flips both. -->
+<div class="modal-backdrop" id="lead-modal">
+  <div class="modal">
+    <button class="close" id="lead-modal-close" aria-label="Close">×</button>
+    <div id="lead-form-wrap">
+      <h3>Get today's picks in your inbox</h3>
+      <p>Drop your email and we'll send you our top pick of the day + the model's read on why. No spam, unsubscribe anytime.</p>
+      <input type="email" id="lead-email" placeholder="you@example.com" autocomplete="email">
+      <button class="submit" id="lead-submit">Send me today's picks</button>
+      <div class="error" id="lead-error" style="display:none"></div>
+      <div class="fine-print">By subscribing you agree to receive marketing emails. Cancel anytime.</div>
+    </div>
+    <div id="lead-success-wrap" style="display:none">
+      <h3>You're in.</h3>
+      <p class="success">✓ We'll be in touch soon.</p>
+      <p>Ready to see the full model right now?</p>
+      <a href="https://whop.com/nexgame-lite/nexgame-lite-44" class="submit" style="display:block;text-decoration:none" target="_blank" rel="noopener">Start 7-Day Free Trial →</a>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>

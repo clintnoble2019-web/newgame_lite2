@@ -156,6 +156,23 @@ CREATE TABLE IF NOT EXISTS customers (
 );
 CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
 CREATE INDEX IF NOT EXISTS idx_customers_license ON customers(license_key);
+
+-- Leads: emails captured from the landing-page opt-in popup, BEFORE
+-- (or entirely separate from) a paid Whop subscription. Deliberately
+-- separate from the customers table since a lead is not a customer
+-- yet and the two lifecycles are different (a lead never has a
+-- license_key, sub_status, etc). If a lead later subscribes via Whop,
+-- the customers row is created alongside — no automatic migration
+-- between tables, so a lead who eventually pays shows up in both.
+CREATE TABLE IF NOT EXISTS leads (
+    email        TEXT PRIMARY KEY,
+    captured_at  TEXT NOT NULL,
+    source       TEXT NOT NULL DEFAULT 'landing_popup',
+    utm_source   TEXT,
+    utm_medium   TEXT,
+    utm_campaign TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_leads_captured_at ON leads(captured_at);
 """
 
 
@@ -293,6 +310,36 @@ def get_by_email(email: str, path: str = None) -> Customer | None:
             "SELECT * FROM customers WHERE lower(email) = lower(?)",
             (email.strip(),)).fetchone()
     return _row_to_customer(row) if row else None
+
+
+# ── Leads (opt-in popup) ─────────────────────────────────────────────
+def save_lead(email: str, source: str = "landing_popup",
+              utm_source: str = "", utm_medium: str = "",
+              utm_campaign: str = "", path: str = None) -> bool:
+    """Store a landing-page opt-in email. Idempotent — same email
+    submitted twice is fine (INSERT OR IGNORE keeps the earlier
+    captured_at). Returns True if a NEW lead was stored, False if it
+    already existed. Email is stripped/lowercased before storage so
+    'Foo@x.com' and 'foo@x.com  ' can't create two rows."""
+    email = email.strip().lower()
+    if not email or "@" not in email:
+        return False
+    with _db(path) as db:
+        cursor = db.execute(
+            "INSERT OR IGNORE INTO leads "
+            "(email, captured_at, source, utm_source, utm_medium, utm_campaign) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (email,
+             datetime.now(timezone.utc).isoformat(timespec="seconds"),
+             source, utm_source, utm_medium, utm_campaign))
+        return cursor.rowcount > 0
+
+
+def lead_count(path: str = None) -> int:
+    """Total unique leads captured. Useful for CLI stats / a future
+    admin dashboard."""
+    with _db(path) as db:
+        return db.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
 
 
 def mark_first_login(customer_id: str, path: str = None) -> bool:

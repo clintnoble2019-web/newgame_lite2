@@ -129,6 +129,37 @@ def public_accuracy_page():
     return FileResponse(os.path.join(STATIC_DIR, "accuracy.html"))
 
 
+# Landing-page opt-in popup — captures email into the leads table.
+# Public (no auth), rate-limited only implicitly by cust.save_lead's
+# INSERT OR IGNORE (duplicate emails are silently accepted, not
+# errored). Returns a generic OK either way so a scraper can't probe
+# whether an email is already on the list.
+@app.post("/api/leads")
+async def capture_lead(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON")
+
+    email = (body.get("email") or "").strip()
+    if not email or "@" not in email or len(email) > 254:
+        # 254 is the RFC 5321 max — anything above that is malformed
+        # or someone trying to jam the DB. Not a real user.
+        raise HTTPException(400, "Please enter a valid email address.")
+
+    cust.save_lead(
+        email=email,
+        source=body.get("source") or "landing_popup",
+        utm_source=(body.get("utm_source") or "")[:64],
+        utm_medium=(body.get("utm_medium") or "")[:64],
+        utm_campaign=(body.get("utm_campaign") or "")[:64],
+    )
+    # Deliberately returning the same response whether the email was
+    # new or a repeat — the visitor doesn't need to know either way,
+    # and a "you're already on the list" leak lets someone probe.
+    return {"status": "ok"}
+
+
 @app.post("/api/login")
 def api_login(response: Response, email: str = Query(...),
              license_key: str = Query(...)):
