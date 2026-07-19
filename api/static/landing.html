@@ -179,14 +179,13 @@ fetch('/api/accuracy')
   });
 
 // ── Opt-in popup ────────────────────────────────────────────────────
-// Fires 15s after page load. Suppressed ONLY after a successful email
-// submission — closing/dismissing the popup does not suppress future
-// showings. Every page load re-triggers until the visitor opts in.
-// Aggressive by design (per Clint 2026-07-19): the popup is the whole
-// point of the marketing page, dismissal shouldn't kill it forever.
+// Fires immediately on page load (2026-07-19 per Clint: 15s delay
+// removed, we want the email regardless of how it feels UX-wise).
+// Suppressed ONLY after a successful email submission — closing/
+// dismissing does not suppress future showings. Every page load
+// re-triggers until the visitor opts in.
 (function() {
   const OPTED_IN_KEY = 'nexgamelite_opted_in_v1';
-  const FIRE_AFTER_MS = 15000;
 
   // Only suppress the popup if this browser has ALREADY successfully
   // opted in. No "dismissed" state — closing without opting in leaves
@@ -279,7 +278,8 @@ fetch('/api/accuracy')
     }
   });
 
-  setTimeout(open, FIRE_AFTER_MS);
+  // Fire immediately, no delay.
+  open();
 })();
 </script>
 
