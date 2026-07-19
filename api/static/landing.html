@@ -184,7 +184,7 @@ fetch('/api/accuracy')
 // Suppressed ONLY after a successful email submission — closing/
 // dismissing does not suppress future showings. Every page load
 // re-triggers until the visitor opts in.
-(function() {
+document.addEventListener('DOMContentLoaded', function() {
   const OPTED_IN_KEY = 'nexgamelite_opted_in_v1';
 
   // Only suppress the popup if this browser has ALREADY successfully
@@ -280,7 +280,7 @@ fetch('/api/accuracy')
 
   // Fire immediately, no delay.
   open();
-})();
+});
 </script>
 
 <!-- Opt-in popup — fires 15s after landing (see script below). Hidden
