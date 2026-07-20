@@ -66,10 +66,11 @@
   <div class="filter-row">
     <label for="sport">Sport:</label>
     <select id="sport" onchange="loadAccuracy()">
-      <option value="">All</option>
+      <option value="">All Sports (excl. CS2)</option>
       <option value="MLB">MLB</option>
       <option value="NBA">NBA</option>
       <option value="WNBA">WNBA</option>
+      <option value="CS2">CS2</option>
     </select>
   </div>
 
@@ -78,11 +79,11 @@
     <div class="acc-card"><div class="big loading">&hellip;</div><div class="lbl">Score Range</div></div>
     <div class="acc-card"><div class="big loading">&hellip;</div><div class="lbl">Player Totals (&plusmn;20%)</div></div>
   </div>
-  <div class="cs2-note">
-    CS2 has been excluded from these accuracy figures &mdash; CS2 roster
+  <div class="cs2-note" id="cs2-note">
+    "All Sports" excludes CS2 from these figures &mdash; CS2 roster
     composition varies too much match-to-match (frequent stand-ins) to
-    track consistently against a fixed prediction. The model still
-    calls CS2 win/loss on individual game cards.
+    track consistently against a fixed prediction. Select CS2 above
+    to see its numbers directly.
   </div>
 
   <div class="section-title">Settled Games History</div>
@@ -102,7 +103,10 @@ async function loadAccuracy() {
     const r = await fetch(url);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const a = await r.json();
-    const o = a.overall || {};
+    // BUG FIX (2026-07-19): previously always read a.overall, which is
+    // the CS2-excluded ALL-sports blend regardless of the sport filter
+    // — selecting a league never actually changed the numbers shown.
+    const o = (sport ? a.by_sport : a.overall) || {};
     document.getElementById('acc-cards').innerHTML = `
       <div class="acc-card"><div class="big">${o.win_loss_pct != null ? o.win_loss_pct + '%' : '—'}</div>
         <div class="lbl">Win / Loss</div></div>
@@ -110,6 +114,7 @@ async function loadAccuracy() {
         <div class="lbl">Score Range</div></div>
       <div class="acc-card"><div class="big">${o.player_total_pct != null ? o.player_total_pct + '%' : '—'}</div>
         <div class="lbl">Player Totals (±20%)</div></div>`;
+    document.getElementById('cs2-note').style.display = sport ? 'none' : 'block';
     document.getElementById('acc-recent').innerHTML =
       (a.recent || []).map(s => `
         <div class="recent-item">

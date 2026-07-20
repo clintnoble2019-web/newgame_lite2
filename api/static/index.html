@@ -233,13 +233,22 @@
   <!-- ACCURACY PAGE -->
   <div id="page-accuracy" style="display:none">
     <div class="section-title">Accuracy Dashboard — Public Track Record</div>
+    <div class="controls">
+      <label for="acc-sport" style="color:var(--dim);font-size:.82rem">League:</label>
+      <select id="acc-sport" onchange="loadAccuracy()" style="min-width:280px">
+        <option value="">All Sports (excl. CS2)</option>
+        <option value="MLB">MLB</option>
+        <option value="NBA">NBA</option>
+        <option value="WNBA">WNBA</option>
+        <option value="CS2">CS2</option>
+      </select>
+    </div>
     <div class="acc-grid" id="acc-cards"></div>
-    <div style="color:var(--dim);font-size:.82rem;margin:8px 0 4px;line-height:1.5">
-      CS2 has been excluded from these accuracy figures — CS2 roster
+    <div id="acc-cs2-note" style="color:var(--dim);font-size:.82rem;margin:8px 0 4px;line-height:1.5">
+      "All Sports" excludes CS2 from these figures — CS2 roster
       composition varies too much match-to-match (frequent stand-ins)
-      to track consistently against a fixed prediction. The model
-      still calls CS2 win/loss on individual game cards; you're
-      welcome to track those results yourself from the Games tab.
+      to track consistently against a fixed prediction the way
+      MLB/NBA/WNBA do. Select CS2 above to see its numbers directly.
     </div>
     <div class="section-title">Settled Games History</div>
     <div id="acc-recent"></div>
@@ -696,9 +705,21 @@ function renderBoxscore(gameId, box) {
 
 // ── accuracy page ────────────────────────────────────────────
 async function loadAccuracy() {
+  // BUG FIX (2026-07-19): this used to always read `a.overall`, which
+  // is the CS2-excluded ALL-sports blend regardless of any sport
+  // filter — so selecting a specific league never actually changed
+  // the win/loss/score-range/player-total numbers shown, only the
+  // settled-games list below them silently stayed correctly filtered.
+  // Now: empty selection -> overall (all sports, CS2 excluded from
+  // the blend). Specific sport selected -> by_sport (that sport's
+  // real numbers, CS2 included if explicitly chosen).
+  const selectedSport = document.getElementById('acc-sport').value;
   try {
-    const a = await apiFetch(`/api/accuracy?sport=${sport()}`);
-    const o = a.overall;
+    const url = selectedSport
+      ? `/api/accuracy?sport=${selectedSport}`
+      : `/api/accuracy`;
+    const a = await apiFetch(url);
+    const o = selectedSport ? a.by_sport : a.overall;
     document.getElementById('acc-cards').innerHTML = `
       <div class="acc-card"><div class="big">${o.win_loss_pct}%</div>
         <div class="lbl">Win / Loss</div></div>
@@ -706,6 +727,8 @@ async function loadAccuracy() {
         <div class="lbl">Score Range</div></div>
       <div class="acc-card"><div class="big">${o.player_total_pct}%</div>
         <div class="lbl">Player Totals (±20%)</div></div>`;
+    document.getElementById('acc-cs2-note').style.display =
+      selectedSport ? 'none' : 'block';
     document.getElementById('acc-recent').innerHTML =
       (a.recent || []).map(s => `
         <div class="recent-item">

@@ -630,6 +630,17 @@ def get_recent_settles(limit: int = 500, sport: str = None) -> list[dict]:
     Default limit raised from 10 to 500 — this feed is the public
     "history of settled games," not a small preview, and 500 comfortably
     covers realistic volume for a long while without needing pagination.
+
+    CS2 EXCLUSION FIX (2026-07-19): previously excluded CS2 with an
+    unconditional `WHERE s.sport != 'CS2'`, applied even when the
+    caller explicitly asked for sport='CS2'. That meant the accuracy
+    dashboard's league dropdown could show real CS2 win/loss numbers
+    (from get_accuracy_summary, which already excluded CS2 correctly
+    — only from the blended ALL view) sitting directly above an empty
+    "no settled games" list, since this function silently dropped
+    every CS2 row regardless of the filter. Now CS2 is only excluded
+    when no specific sport was requested (the "All Sports" blend),
+    exactly matching get_accuracy_summary's existing, correct pattern.
     """
     query = """
         SELECT s.id, s.game_id, s.sport, s.predicted_winner, s.actual_winner,
@@ -640,12 +651,13 @@ def get_recent_settles(limit: int = 500, sport: str = None) -> list[dict]:
                COALESCE(NULLIF(s.away_team, ''), p.away_team) AS away_team
         FROM settles s
         LEFT JOIN predictions p ON p.game_id = s.game_id
-        WHERE s.sport != 'CS2'
     """
     params = []
     if sport:
-        query += " AND s.sport = ?"
+        query += " WHERE s.sport = ?"
         params.append(sport.upper())
+    else:
+        query += " WHERE s.sport != 'CS2'"
     query += " ORDER BY s.settled_at DESC LIMIT ?"
     params.append(limit)
 
