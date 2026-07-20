@@ -101,34 +101,18 @@
 <script>
 !function(w,d,s,u,n,a,b){if(w[n])return;a=w[n]={q:[],t:+new Date,s:[],o:u,track:function(){a.q.push([+new Date].concat([].slice.call(arguments)))},setScope:function(){a.s=[].slice.call(arguments).filter(function(x){return typeof x==="string"});a.q.push([+new Date,"setScope"].concat(a.s))},scope:function(){var c=[].slice.call(arguments);return{track:function(){a.q.push([+new Date].concat([].slice.call(arguments)).concat([{__scope:c}]))}}}};b=d.createElement(s);b.async=1;b.src=u+"/s.js";d.getElementsByTagName(s)[0].parentNode.insertBefore(b,d.getElementsByTagName(s)[0])}(window,document,"script","https://t.whop.tw","whop");whop.setScope("biz_mNn7NSmrOxVAl7");whop.track("page");whop.track("pixel");
 </script>
-
-<!-- Meta Pixel (added 2026-07-20) — this was MISSING all week. Every
-     ad screenshot showed "Results: —" because Meta had no pixel on
-     this page and literally could not know when anyone converted.
-     The Whop script above is a SEPARATE, unrelated tracking pixel
-     (Whop's own analytics, not Meta's) — having it installed did
-     nothing for Meta Ads Manager's own event reporting.
-     PASTE_YOUR_PIXEL_ID_HERE below with the real ID from Meta Events
-     Manager (business.facebook.com/events_manager) before this does
-     anything. PageView fires automatically on every load (standard
-     base-code behavior); the Lead event fires separately, only on a
-     successful popup submission — see the script near the bottom of
-     this file. -->
-<script>
-!function(f,b,e,v,n,t,s)
-{if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-n.callMethod.apply(n,arguments):n.queue.push(arguments)};
-if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
-n.queue=[];t=b.createElement(e);t.async=!0;
-t.src=v;s=b.getElementsByTagName(e)[0];
-s.parentNode.insertBefore(t,s)}(window, document,'script',
-'https://connect.facebook.net/en_US/fbevents.js');
-fbq('init', 'PASTE_YOUR_PIXEL_ID_HERE');
-fbq('track', 'PageView');
-</script>
-<noscript><img height="1" width="1" style="display:none"
-  src="https://www.facebook.com/tr?id=PASTE_YOUR_PIXEL_ID_HERE&ev=PageView&noscript=1"
-/></noscript>
+<!-- CORRECTED 2026-07-20: this IS the real, official Whop Pixel
+     install snippet (confirmed against docs.whop.com/developer/
+     guides/pixel) — it's been correctly installed this whole time.
+     Whop forwards every event to Meta automatically via their own
+     Conversions API, so there's no separate Meta fbq() code needed
+     here (an earlier version of this file briefly added one — wrong,
+     removed). The real gap was never "no pixel" — it was that this
+     page only fired the standard "view_content" event on page load
+     and never fired "lead" on a successful popup submission, which
+     is the one funnel step Whop's docs say you have to instrument
+     yourself since it happens on your own infrastructure, not inside
+     Whop checkout. That's fixed below, at the popup's success path. -->
 </head>
 <body>
 
@@ -298,13 +282,16 @@ document.addEventListener('DOMContentLoaded', function() {
       formWrap.style.display = 'none';
       successWrap.style.display = 'block';
       markOptedIn();
-      // Meta Pixel Lead event — fires ONLY here, on a real successful
-      // submission. This is what Ads Manager's "Lead" conversion
-      // event needs to actually receive data — without this call,
-      // the campaign we set up would sit in Learning Limited forever
-      // with zero real signal, same failure mode as the Purchase-only
-      // setup from earlier in the week, just for a different event.
-      if (window.fbq) { fbq('track', 'Lead'); }
+      // CORRECTED 2026-07-20: this is the actual, documented way to
+      // report a lead to Whop's pixel (docs.whop.com/developer/
+      // guides/pixel) — fires ONLY here, on a genuinely successful
+      // submission, never on errors or duplicates. Whop forwards this
+      // to Meta (and every other connected ad platform) automatically
+      // via their Conversions API — no separate Meta code needed.
+      // Attaching the email is optional per Whop's docs but improves
+      // match-quality/attribution accuracy, and we already have it
+      // right here at zero extra cost.
+      if (window.whop) { whop.track('lead', { email: email }); }
     } catch (err) {
       errorDiv.textContent = err.message;
       errorDiv.style.display = 'block';
