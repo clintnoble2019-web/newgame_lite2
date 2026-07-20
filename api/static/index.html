@@ -7,13 +7,13 @@
 <style>
   :root {
     --bg: #0A0A0A; --panel: #161616; --card: #1E1E1E;
-    --accent: #E62222; --gold: #FFD700; --green: #00FF88;
+    --accent: #E62222; --accent-text: #FF5555; --gold: #FFD700; --green: #00FF88;
     --red: #FF5566; --text: #CCCCCC; --dim: #888888;
     --border: #2A2A2A;
   }
   /* Wordmark — matches the logo's NEX(white)/GAME(red)/LITE(white) split */
   h1 .wm-w { color: #fff; }
-  h1 .wm-r { color: var(--accent); }
+  h1 .wm-r { color: var(--accent-text); }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: var(--bg); color: var(--text);
@@ -25,14 +25,14 @@
     padding: 16px 24px; display: flex; align-items: center; gap: 24px;
     flex-wrap: wrap;
   }
-  header h1 { color: var(--accent); font-size: 1.4rem; letter-spacing: 1px; }
+  header h1 { color: var(--accent-text); font-size: 1.4rem; letter-spacing: 1px; }
   header .sub { color: var(--dim); font-size: .8rem; }
   nav { display: flex; gap: 8px; margin-left: auto; }
   .tab-btn {
     background: var(--card); color: var(--text); border: 1px solid var(--border);
     padding: 8px 18px; border-radius: 6px; cursor: pointer; font-size: .9rem;
   }
-  .tab-btn.active { border-color: var(--accent); color: var(--accent); }
+  .tab-btn.active { border-color: var(--accent); color: var(--accent-text); }
   main { max-width: 1100px; margin: 0 auto; padding: 24px; }
 
   .section-title {
@@ -45,7 +45,7 @@
     background: var(--card); border: 1px solid var(--border);
     border-radius: 8px; padding: 10px 14px; min-width: 150px; flex-shrink: 0;
   }
-  .tick .m { color: var(--accent); font-size: .8rem; }
+  .tick .m { color: var(--accent-text); font-size: .8rem; }
   .tick .s { font-size: 1.15rem; font-weight: 600; color: #fff; }
   .tick .p { color: var(--dim); font-size: .75rem; }
 
@@ -67,7 +67,7 @@
   .spacer { flex: 1; }
   button.run {
     background: linear-gradient(90deg, #003344, #005566);
-    color: var(--accent); border: 1px solid var(--accent);
+    color: var(--accent-text); border: 1px solid var(--accent);
     padding: 8px 18px; border-radius: 6px; cursor: pointer; font-weight: 600;
   }
   button.run:hover { background: #005566; }
@@ -107,14 +107,14 @@
 
   .ranges { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
   .range-box { background: var(--panel); border-radius: 8px; padding: 12px; }
-  .range-box .team { color: var(--accent); font-size: .85rem; }
+  .range-box .team { color: var(--accent-text); font-size: .85rem; }
   .range-box .val { font-size: 1.3rem; font-weight: 700; color: #fff; }
   .range-box .med { color: var(--dim); font-size: .78rem; }
 
   /* pitching matchup */
   .matchup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
   .pitcher-box { background: var(--panel); border-radius: 8px; padding: 12px; }
-  .pitcher-box .team { color: var(--accent); font-size: .8rem; }
+  .pitcher-box .team { color: var(--accent-text); font-size: .8rem; }
   .pitcher-box .pname { font-size: 1.05rem; font-weight: 700; color: #fff; margin: 2px 0; }
   .pitcher-box .pstats { color: var(--dim); font-size: .8rem; }
   .pitcher-box .tag { display: inline-block; padding: 1px 8px; border-radius: 10px;
@@ -127,7 +127,7 @@
                                 font-size: .9rem; }
 
   table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: .85rem; }
-  th { color: var(--accent); text-align: left; padding: 6px 10px;
+  th { color: var(--accent-text); text-align: left; padding: 6px 10px;
        border-bottom: 1px solid var(--border); text-transform: uppercase;
        font-size: .72rem; letter-spacing: .5px; }
   td { padding: 6px 10px; border-bottom: 1px solid #222; }
@@ -142,11 +142,11 @@
   .acc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
   .acc-card { background: var(--card); border: 1px solid var(--border);
               border-radius: 10px; padding: 18px; text-align: center; }
-  .acc-card .big { font-size: 2rem; font-weight: 800; color: var(--accent); }
+  .acc-card .big { font-size: 2rem; font-weight: 800; color: var(--accent-text); }
   .acc-card .lbl { color: var(--dim); font-size: .8rem; text-transform: uppercase; }
   .recent-item { padding: 10px 0; border-bottom: 1px solid #222; font-size: .9rem; }
 
-  .loading { color: var(--accent); font-size: .85rem; }
+  .loading { color: var(--accent-text); font-size: .85rem; }
   @media (max-width: 640px) { .acc-grid, .ranges, .matchup-grid { grid-template-columns: 1fr; } }
 
   /* clickable game card */
@@ -177,7 +177,7 @@
     color: var(--text); border-radius: 6px; width: 32px; height: 32px;
     cursor: pointer; font-size: 1rem;
   }
-  .modal-title { color: var(--accent); font-size: 1.2rem; font-weight: 700;
+  .modal-title { color: var(--accent-text); font-size: 1.2rem; font-weight: 700;
                 margin-bottom: 4px; }
   .modal-score { font-size: 1.6rem; font-weight: 800; color: #fff;
                 margin: 8px 0; }
@@ -187,7 +187,7 @@
     text-align: center; padding: 5px 8px; font-size: .8rem;
     border-bottom: 1px solid #222;
   }
-  .linescore-table th { color: var(--accent); }
+  .linescore-table th { color: var(--accent-text); }
   .linescore-table td.team-label { text-align: left; color: #fff; font-weight: 600; }
   .linescore-table td.tot { color: var(--gold); font-weight: 700; }
 </style>

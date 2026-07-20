@@ -7,7 +7,7 @@
 <style>
   :root {
     --bg: #0A0A0A; --panel: #161616; --card: #1E1E1E;
-    --accent: #E62222; --gold: #FFD700; --green: #00FF88;
+    --accent: #E62222; --accent-text: #FF5555; --gold: #FFD700; --green: #00FF88;
     --red: #FF5566; --text: #CCCCCC; --dim: #888888;
     --border: #2A2A2A;
   }
@@ -18,23 +18,23 @@
 
   nav { display: flex; justify-content: space-between; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--border); }
   .logo { font-size: 20px; font-weight: 700; color: #fff; letter-spacing: 0.5px; }
-  .logo span { color: var(--accent); }
+  .logo span { color: var(--accent-text); }
   .login-link { font-size: 14px; color: var(--dim); text-decoration: none; border: 1px solid var(--border); padding: 8px 16px; border-radius: 6px; }
-  .login-link:hover { border-color: var(--accent); color: var(--accent); }
+  .login-link:hover { border-color: var(--accent); color: var(--accent-text); }
 
   .hero { text-align: center; padding: 80px 0 60px; }
   .hero h1 { font-size: 40px; color: #fff; margin-bottom: 16px; line-height: 1.25; }
-  .hero h1 span { color: var(--accent); }
+  .hero h1 span { color: var(--accent-text); }
   .hero p { font-size: 17px; color: var(--dim); max-width: 600px; margin: 0 auto 32px; }
   .cta-primary { display: inline-block; background: var(--accent); color: #fff; font-weight: 700; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; }
   .cta-sub { font-size: 13px; color: var(--dim); margin-top: 12px; }
 
   .stats-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding: 32px 0; }
   .stat-box { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; text-align: center; }
-  .stat-box .num { font-size: 28px; font-weight: 700; color: var(--accent); }
+  .stat-box .num { font-size: 28px; font-weight: 700; color: var(--accent-text); }
   .stat-box .label { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
   .stat-note { text-align: center; font-size: 13px; color: var(--dim); padding-bottom: 40px; }
-  .stat-note a { color: var(--accent); text-decoration: none; }
+  .stat-note a { color: var(--accent-text); text-decoration: none; }
 
   .section-title { font-size: 26px; color: #fff; text-align: center; margin-bottom: 8px; }
   .section-sub { text-align: center; color: var(--dim); margin-bottom: 40px; font-size: 15px; }
