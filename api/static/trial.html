@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NexGame Lite — Free Pick of the Day, 7-Day Free Trial</title>
+<style>
+  :root {
+    --bg: #0A0A0A; --panel: #161616; --card: #1E1E1E;
+    --accent: #E62222; --accent-text: #FF5555; --gold: #FFD700; --green: #00FF88;
+    --red: #FF5566; --text: #CCCCCC; --dim: #888888;
+    --border: #2A2A2A;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; line-height: 1.5; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+  a { color: inherit; }
+
+  nav { text-align: center; padding: 24px 0; }
+  .logo { font-size: 18px; font-weight: 700; letter-spacing: 0.5px; }
+  .logo .wm-w { color: #fff; }
+  .logo .wm-r { color: var(--accent); }
+
+  .hero { text-align: center; padding: 30px 0 20px; }
+  .hero h1 { font-size: 34px; color: #fff; margin-bottom: 14px; line-height: 1.3; }
+  .hero p { font-size: 17px; color: var(--dim); max-width: 520px; margin: 0 auto 30px; }
+
+  .cta-primary {
+    display: inline-block; background: var(--accent); color: #fff;
+    font-weight: 700; padding: 16px 40px; border-radius: 8px;
+    text-decoration: none; font-size: 18px;
+  }
+  .cta-primary:hover { opacity: 0.92; }
+  .cta-sub { font-size: 13px; color: var(--dim); margin-top: 12px; }
+
+  .stats-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; padding: 36px 0 8px; }
+  .stat-box { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px 10px; text-align: center; }
+  .stat-box .num { font-size: 26px; font-weight: 700; color: var(--accent-text); }
+  .stat-box .label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+  .stat-note { text-align: center; font-size: 12px; color: var(--dim); padding-bottom: 30px; }
+  .stat-note a { color: var(--accent-text); text-decoration: none; }
+
+  .trust-list { list-style: none; padding: 20px 0 10px; max-width: 480px; margin: 0 auto; }
+  .trust-list li { padding: 10px 0 10px 30px; position: relative; color: var(--text); font-size: 15px; border-bottom: 1px solid var(--border); }
+  .trust-list li:last-child { border-bottom: none; }
+  .trust-list li::before { content: "✓"; position: absolute; left: 0; color: var(--green); font-weight: 700; }
+
+  .bottom-cta { text-align: center; padding: 40px 0 60px; }
+  .bottom-cta h2 { font-size: 22px; color: #fff; margin-bottom: 20px; }
+
+  footer { border-top: 1px solid var(--border); padding: 24px 0; text-align: center; font-size: 11px; color: var(--dim); }
+</style>
+</head>
+<body>
+
+<script>
+!function(w,d,s,u,n,a,b){if(w[n])return;a=w[n]={q:[],t:+new Date,s:[],o:u,track:function(){a.q.push([+new Date].concat([].slice.call(arguments)))},setScope:function(){a.s=[].slice.call(arguments).filter(function(x){return typeof x==="string"});a.q.push([+new Date,"setScope"].concat(a.s))},scope:function(){var c=[].slice.call(arguments);return{track:function(){a.q.push([+new Date].concat([].slice.call(arguments)).concat([{__scope:c}]))}}}};b=d.createElement(s);b.async=1;b.src=u+"/s.js";d.getElementsByTagName(s)[0].parentNode.insertBefore(b,d.getElementsByTagName(s)[0])}(window,document,"script","https://t.whop.tw","whop");whop.setScope("biz_mNn7NSmrOxVAl7");whop.track("page");whop.track("pixel");
+</script>
+<!-- Same Whop pixel install as the homepage — real, confirmed-working
+     tracking, forwards to every connected ad platform automatically.
+     This page has no popup/lead-capture path, so it only ever fires
+     the standard page-load events; the "lead" event stays specific
+     to the homepage's popup, where an actual email gets captured. -->
+
+<div class="wrap">
+  <nav>
+    <div class="logo"><span class="wm-w">NEX</span><span class="wm-r">GAME</span> <span class="wm-w">LITE</span></div>
+  </nav>
+
+  <div class="hero">
+    <h1>🎯 Free Pick of the Day 🎯</h1>
+    <p>10,000-simulation Monte Carlo predictions for MLB, NBA, WNBA, and CS2 — start your 7-day free trial and see today's full slate right now.</p>
+    <a href="https://whop.com/nexgame-lite/nexgame-lite-44" class="cta-primary" target="_blank" rel="noopener">Start Your 7-Day Free Trial</a>
+    <div class="cta-sub">No charge until day 8. Cancel anytime.</div>
+  </div>
+
+  <div class="stats-strip" id="stats-strip">
+    <div class="stat-box"><div class="num" id="stat-winloss">—</div><div class="label">Win/Loss Accuracy</div></div>
+    <div class="stat-box"><div class="num" id="stat-range">—</div><div class="label">Score Range Accuracy</div></div>
+    <div class="stat-box"><div class="num">10,000</div><div class="label">Simulations / Game</div></div>
+  </div>
+  <div class="stat-note">Live numbers, pulled from our own settled-game history. <a href="/accuracy" target="_blank">See the full public record →</a></div>
+
+  <ul class="trust-list">
+    <li>Real matchup data — confirmed starters, live team &amp; player stats</li>
+    <li>Every prediction graded automatically against the final score</li>
+    <li>Public, auditable accuracy — nothing cherry-picked</li>
+  </ul>
+
+  <div class="bottom-cta">
+    <h2>See today's pick before you decide.</h2>
+    <a href="https://whop.com/nexgame-lite/nexgame-lite-44" class="cta-primary" target="_blank" rel="noopener">Start Your 7-Day Free Trial</a>
+    <div class="cta-sub">No charge until day 8. Cancel anytime.</div>
+  </div>
+
+  <footer>
+    NexGame Lite &middot; Kage Software &middot; Predictions are probabilistic, not guaranteed
+  </footer>
+</div>
+
+<script>
+// Live accuracy stats — /api/accuracy is PUBLIC (no login required).
+fetch('/api/accuracy')
+  .then(r => r.json())
+  .then(data => {
+    const o = data.overall || {};
+    document.getElementById('stat-winloss').textContent =
+      o.win_loss_pct != null ? o.win_loss_pct.toFixed(1) + '%' : '—';
+    document.getElementById('stat-range').textContent =
+      o.score_range_pct != null ? o.score_range_pct.toFixed(1) + '%' : '—';
+  })
+  .catch(() => {
+    // Leave the em-dashes in place rather than showing an error —
+    // a stat-fetch failure shouldn't look broken to someone deciding
+    // whether to trust the product.
+  });
+</script>
+
+</body>
+</html>

@@ -129,6 +129,16 @@ def public_accuracy_page():
     return FileResponse(os.path.join(STATIC_DIR, "accuracy.html"))
 
 
+# Dedicated single-purpose ad-destination page (2026-07-20) — separate
+# from the homepage on purpose. The homepage (/) sells the product AND
+# runs the email popup; this page has exactly one job: turn an ad
+# click into a Whop trial signup, with nothing competing for
+# attention. No popup here — the CTA is the only ask.
+@app.get("/trial")
+def trial_landing_page():
+    return FileResponse(os.path.join(STATIC_DIR, "trial.html"))
+
+
 # Landing-page opt-in popup — captures email into the leads table.
 # Public (no auth), rate-limited only implicitly by cust.save_lead's
 # INSERT OR IGNORE (duplicate emails are silently accepted, not
