@@ -48,6 +48,31 @@
   .bottom-cta { text-align: center; padding: 40px 0 60px; }
   .bottom-cta h2 { font-size: 22px; color: #fff; margin-bottom: 20px; }
 
+  .lead-inline {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 26px 24px; margin: 10px 0 30px;
+    text-align: center;
+  }
+  .lead-inline h3 { color: #fff; font-size: 17px; margin-bottom: 6px; }
+  .lead-inline p { color: var(--dim); font-size: 13px; margin-bottom: 16px; }
+  .lead-inline-row { display: flex; gap: 10px; max-width: 400px; margin: 0 auto; }
+  .lead-inline input[type=email] {
+    flex: 1; padding: 11px 14px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-size: 14px; font-family: inherit;
+  }
+  .lead-inline input[type=email]:focus { outline: none; border-color: var(--accent); }
+  .lead-inline button {
+    background: var(--border); color: #fff; border: none;
+    padding: 11px 20px; border-radius: 6px; font-weight: 600;
+    font-size: 14px; cursor: pointer; font-family: inherit;
+    white-space: nowrap;
+  }
+  .lead-inline button:hover { background: #3a3a3a; }
+  .lead-inline button:disabled { opacity: 0.5; cursor: default; }
+  .lead-inline .error { color: var(--red); font-size: 12px; margin-top: 8px; }
+  .lead-inline .success { color: var(--green); font-size: 14px; }
+
   footer { border-top: 1px solid var(--border); padding: 24px 0; text-align: center; font-size: 11px; color: var(--dim); }
 </style>
 </head>
@@ -58,9 +83,12 @@
 </script>
 <!-- Same Whop pixel install as the homepage — real, confirmed-working
      tracking, forwards to every connected ad platform automatically.
-     This page has no popup/lead-capture path, so it only ever fires
-     the standard page-load events; the "lead" event stays specific
-     to the homepage's popup, where an actual email gets captured. -->
+     UPDATED 2026-07-21: this page now DOES have a lead-capture path
+     (the inline form below) — added so a Lead-optimized ad campaign
+     pointed here can actually produce real conversions. Originally
+     built with no email capture at all; the ad using this page as
+     its destination was optimizing for "Lead," which structurally
+     could never fire on a page with nothing to submit. -->
 
 <div class="wrap">
   <nav>
@@ -86,6 +114,25 @@
     <li>Every prediction graded automatically against the final score</li>
     <li>Public, auditable accuracy — nothing cherry-picked</li>
   </ul>
+
+  <!-- Secondary, lower-commitment path — deliberately NOT a popup, so
+       it never competes with or interrupts the primary trial CTA
+       above. Someone who scrolls this far but isn't ready to start a
+       trial yet gets a lighter ask instead of nothing. -->
+  <div class="lead-inline" id="lead-inline">
+    <div id="lead-form-wrap">
+      <h3>Not ready to start the trial?</h3>
+      <p>Get today's free pick sent to your inbox instead — no card required.</p>
+      <div class="lead-inline-row">
+        <input type="email" id="lead-email" placeholder="you@example.com" autocomplete="email">
+        <button id="lead-submit">Send me today's pick</button>
+      </div>
+      <div class="error" id="lead-error" style="display:none"></div>
+    </div>
+    <div id="lead-success-wrap" style="display:none">
+      <p class="success">✓ You're in — check your inbox soon.</p>
+    </div>
+  </div>
 
   <div class="bottom-cta">
     <h2>See today's pick before you decide.</h2>
@@ -114,6 +161,69 @@ fetch('/api/accuracy')
     // a stat-fetch failure shouldn't look broken to someone deciding
     // whether to trust the product.
   });
+
+// Inline lead capture — same backend contract as the homepage popup
+// (/api/leads), same whop.track('lead') firing convention. This is
+// what lets a Lead-optimized ad pointed at THIS page actually produce
+// real conversions.
+document.addEventListener('DOMContentLoaded', function() {
+  const params = new URLSearchParams(window.location.search);
+  const utm = {
+    source: params.get('utm_source') || '',
+    medium: params.get('utm_medium') || '',
+    campaign: params.get('utm_campaign') || '',
+  };
+
+  const emailInput = document.getElementById('lead-email');
+  const submitBtn = document.getElementById('lead-submit');
+  const errorDiv = document.getElementById('lead-error');
+  const formWrap = document.getElementById('lead-form-wrap');
+  const successWrap = document.getElementById('lead-success-wrap');
+
+  emailInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitBtn.click();
+  });
+
+  submitBtn.addEventListener('click', async () => {
+    const email = emailInput.value.trim();
+    if (!email || !email.includes('@')) {
+      errorDiv.textContent = 'Please enter a valid email.';
+      errorDiv.style.display = 'block';
+      return;
+    }
+    errorDiv.style.display = 'none';
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Sending...';
+    try {
+      const r = await fetch('/api/leads', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          email: email,
+          source: 'trial_page_inline',
+          utm_source: utm.source,
+          utm_medium: utm.medium,
+          utm_campaign: utm.campaign,
+        }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.detail || 'Something went wrong.');
+      }
+      formWrap.style.display = 'none';
+      successWrap.style.display = 'block';
+      // Same real, working event as the homepage popup — this is the
+      // actual fix: a Lead-optimized ad pointed at /trial can now
+      // genuinely produce this event.
+      if (window.whop) { whop.track('lead', { email: email }); }
+    } catch (err) {
+      errorDiv.textContent = err.message;
+      errorDiv.style.display = 'block';
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Send me today\'s pick';
+    }
+  });
+});
 </script>
 
 </body>
