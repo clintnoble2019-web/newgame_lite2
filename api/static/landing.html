@@ -209,12 +209,18 @@ document.addEventListener('DOMContentLoaded', function() {
   // UTM capture — comes from ?utm_source=whop&utm_campaign=xyz on the
   // ad link, then rides along in the /api/leads POST so the DB row
   // attributes to whichever ad drove the visit.
+  //
+  // fbclid (added 2026-07-22) — Meta appends this to ad-driven clicks
+  // automatically. It's sent to the backend for the Whop server-side
+  // Conversions API call (whop_conversions.py), NOT stored in the
+  // leads table — it's ad-attribution context, not lead data.
   const params = new URLSearchParams(window.location.search);
   const utm = {
     source: params.get('utm_source') || '',
     medium: params.get('utm_medium') || '',
     campaign: params.get('utm_campaign') || '',
   };
+  const fbclid = params.get('fbclid') || '';
 
   const modal = document.getElementById('lead-modal');
   const closeBtn = document.getElementById('lead-modal-close');
@@ -273,6 +279,8 @@ document.addEventListener('DOMContentLoaded', function() {
           utm_source: utm.source,
           utm_medium: utm.medium,
           utm_campaign: utm.campaign,
+          fbclid: fbclid,
+          page_url: window.location.href,
         }),
       });
       if (!r.ok) {

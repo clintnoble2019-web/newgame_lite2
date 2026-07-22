@@ -159,6 +159,11 @@ async def capture_lead(request: Request):
 
     utm_source = (body.get("utm_source") or "")[:64]
     utm_campaign = (body.get("utm_campaign") or "")[:64]
+    # fbclid + page_url are used only for the Whop Conversions API call
+    # below, not stored in the leads table — they're ad-attribution
+    # context, not lead data.
+    fbclid = (body.get("fbclid") or "")[:256]
+    page_url = (body.get("page_url") or "https://nexgamelite.com")[:512]
 
     is_new = cust.save_lead(
         email=email,
@@ -168,8 +173,9 @@ async def capture_lead(request: Request):
         utm_campaign=utm_campaign,
     )
 
-    # Notify on genuinely new leads only — a returning visitor
-    # re-submitting the same email shouldn't buzz your phone.
+    # Notify + report to ad platforms on genuinely new leads only — a
+    # returning visitor re-submitting the same email shouldn't buzz
+    # your phone OR get double-reported as a fresh conversion.
     if is_new:
         try:
             import pushover
@@ -192,6 +198,30 @@ async def capture_lead(request: Request):
             import logging
             logging.getLogger(__name__).exception(
                 "Lead notify failed (lead itself was saved)")
+
+        try:
+            import whop_conversions
+            # Railway sits behind a proxy — request.client.host would
+            # be Railway's internal IP, not the real visitor's. Use
+            # X-Forwarded-For (client's real IP is the first entry)
+            # when present, falling back to request.client.host.
+            forwarded = request.headers.get("x-forwarded-for", "")
+            ip_address = (forwarded.split(",")[0].strip() if forwarded
+                          else (request.client.host if request.client else ""))
+            whop_conversions.send_lead_event(
+                email=email,
+                url=page_url,
+                ip_address=ip_address,
+                user_agent=request.headers.get("user-agent", ""),
+                fbclid=fbclid,
+            )
+        except Exception:
+            # Same guarantee as Pushover above — this is a best-effort
+            # supplement to the already-working client-side pixel, and
+            # must never be able to break lead capture.
+            import logging
+            logging.getLogger(__name__).exception(
+                "Whop Conversions API call failed (lead itself was saved)")
 
     # Deliberately returning the same response whether the email was
     # new or a repeat — the visitor doesn't need to know either way,

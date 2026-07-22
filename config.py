@@ -197,6 +197,11 @@ WHOP_OAUTH_REDIRECT_URI = os.environ.get(
     "WHOP_OAUTH_REDIRECT_URI",
     "https://nexgamelite.com/api/auth/callback/whop")
 WHOP_API_KEY = os.environ.get("WHOP_API_KEY", "")
+# Company ID (biz_...) — same value already used in the client-side
+# Whop pixel's setScope() call on every page (landing.html, trial.html,
+# accuracy.html), so it's not a secret — hardcoding it as the default
+# is fine, but env var override still works if it ever changes.
+WHOP_COMPANY_ID = os.environ.get("WHOP_COMPANY_ID", "biz_mNn7NSmrOxVAl7")
 # Product ID (prod_...) for NexGame Lite — find it on that product's
 # page in your Whop dashboard, or via GET /api/v1/products.
 WHOP_ACCESS_PASS_ID = os.environ.get("WHOP_ACCESS_PASS_ID", "")

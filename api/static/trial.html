@@ -173,6 +173,9 @@ document.addEventListener('DOMContentLoaded', function() {
     medium: params.get('utm_medium') || '',
     campaign: params.get('utm_campaign') || '',
   };
+  // fbclid + page_url — sent to the backend for the Whop server-side
+  // Conversions API call, not stored in the leads table itself.
+  const fbclid = params.get('fbclid') || '';
 
   const emailInput = document.getElementById('lead-email');
   const submitBtn = document.getElementById('lead-submit');
@@ -204,6 +207,8 @@ document.addEventListener('DOMContentLoaded', function() {
           utm_source: utm.source,
           utm_medium: utm.medium,
           utm_campaign: utm.campaign,
+          fbclid: fbclid,
+          page_url: window.location.href,
         }),
       });
       if (!r.ok) {
