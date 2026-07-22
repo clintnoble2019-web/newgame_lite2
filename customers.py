@@ -10,9 +10,10 @@ Two completely separate buyer populations, priced deliberately apart
         LIFETIME   -> $900, never expires
 
     B2C — Whop, single product, three billing intervals:
-        MONTHLY    -> $39.98/mo, 7-day free trial
-        SEMIANNUAL -> $199.99 / 6 months
-        ANNUAL     -> $399.99 / year
+        MONTHLY    -> $39.98/mo, no trial (removed 2026-07-21 — was
+                       a 7-day free trial for the first week of launch)
+        SEMIANNUAL -> $199.99 / 6 months, 7-day free trial
+        ANNUAL     -> $399.99 / year, 7-day free trial
 
 CHANGED 2026-07-18 per Clint: Whop REPLACES Gumroad entirely as the B2C
 billing processor. Chosen because Whop can act as merchant-of-record
@@ -72,7 +73,7 @@ class Tier(Enum):
     SEASON = "season"                  # $450
     LIFETIME = "lifetime"              # $900
     # B2C — Whop, one product, three billing intervals
-    MONTHLY = "monthly"                # $39.98/mo, 7-day free trial
+    MONTHLY = "monthly"                # $39.98/mo, no trial (as of 2026-07-21)
     SEMIANNUAL = "semiannual"          # $199.99 / 6 months
     ANNUAL = "annual"                  # $399.99 / year
 

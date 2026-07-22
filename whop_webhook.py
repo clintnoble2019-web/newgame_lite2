@@ -146,11 +146,13 @@ async def whop_webhook(request: Request):
     # ── membership.activated: new subscriber OR trial start ─────────
     if event == "membership.activated":
         tier = _tier_from_plan_id(fields["plan_id"])
-        # Whop reports "trialing" during the 7-day free trial (monthly
-        # plan only — confirm at launch whether Whop applies it to the
-        # 6mo/yr plans too, since trials are configured per-plan on
-        # their end), "active" once it converts to paid or on the
-        # 6mo/yr plans that don't offer a trial at all.
+        # UPDATED 2026-07-21: confirmed reality is the OPPOSITE of what
+        # this comment originally speculated — Monthly does NOT have a
+        # trial (removed after the first week), while Semiannual and
+        # Annual DO have a 7-day free trial. Whop reports "trialing"
+        # for those two tiers during that window, "active" once it
+        # converts to paid, or "active" immediately for Monthly (no
+        # trial state to pass through at all).
         status = (cust.SubStatus.TRIALING if fields["status"] == "trialing"
                   else cust.SubStatus.ACTIVE)
 
